@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 interface QuoteStatusDropdownProps {
   currentStatus: string;
   onStatusChange: (newStatus: string) => void;
+  useDbStatuses?: boolean; // if true, show DB statuses (draft/sent/...) instead of friendly labels
 }
 
 const quoteStatusOptions = [
@@ -25,7 +26,18 @@ const quoteStatusOptions = [
   { name: "Cancelled", icon: X, color: "text-red-600" },
 ];
 
-export function QuoteStatusDropdown({ currentStatus, onStatusChange }: QuoteStatusDropdownProps) {
+// Database-backed statuses used by quotes table
+const dbStatusOptions = [
+  { name: "draft", icon: FileText, color: "text-gray-600" },
+  { name: "sent", icon: FileText, color: "text-blue-600" },
+  { name: "pending_approval", icon: Palette, color: "text-yellow-600" },
+  { name: "approved", icon: CheckCircle, color: "text-green-600" },
+  { name: "rejected", icon: X, color: "text-red-600" },
+  { name: "expired", icon: Package, color: "text-purple-600" },
+  { name: "converted", icon: CreditCard, color: "text-teal-600" },
+];
+
+export function QuoteStatusDropdown({ currentStatus, onStatusChange, useDbStatuses = false }: QuoteStatusDropdownProps) {
   const { toast } = useToast();
 
   const handleStatusSelect = (status: string) => {
@@ -36,28 +48,30 @@ export function QuoteStatusDropdown({ currentStatus, onStatusChange }: QuoteStat
     });
   };
 
-  const currentStatusConfig = quoteStatusOptions.find(option => 
+  const options = useDbStatuses ? dbStatusOptions : quoteStatusOptions;
+
+  const currentStatusConfig = options.find(option => 
     option.name.toLowerCase() === currentStatus.toLowerCase()
-  ) || quoteStatusOptions[0];
+  ) || options[0];
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" className="gap-2">
           <currentStatusConfig.icon className={`h-4 w-4 ${currentStatusConfig.color}`} />
-          {currentStatus}
+          {useDbStatuses ? currentStatus.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : currentStatus}
           <ChevronDown className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-48 bg-white">
-        {quoteStatusOptions.map((option) => (
+        {options.map((option) => (
           <DropdownMenuItem
             key={option.name}
             onClick={() => handleStatusSelect(option.name)}
             className="flex items-center gap-2 cursor-pointer"
           >
             <option.icon className={`h-4 w-4 ${option.color}`} />
-            {option.name}
+            {useDbStatuses ? option.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : option.name}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

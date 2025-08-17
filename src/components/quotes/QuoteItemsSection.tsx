@@ -126,6 +126,16 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
       }
     ]);
 
+    // Track the currently active group (last interacted with)
+    const [activeGroupId, setActiveGroupId] = useState<string>("group-1");
+
+    useEffect(() => {
+      // Initialize to first group's id on mount
+      if (itemGroups[0] && !activeGroupId) {
+        setActiveGroupId(itemGroups[0].id);
+      }
+    }, []);
+
     // Add state for imprint dialog
     const [imprintDialogOpen, setImprintDialogOpen] = useState(false);
     const [selectedItemId, setSelectedItemId] = useState<string>('');
@@ -177,6 +187,8 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
     const updateItem = (groupId: string, itemId: string, updates: Partial<QuoteItem>) => {
 
       
+      // Mark this group as active for contextual add buttons
+      setActiveGroupId(groupId);
       setItemGroups(prev => {
         const updated = prev.map(group => {
           if (group.id === groupId) {
@@ -212,6 +224,8 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
     // Update size quantity
     const updateSizeQuantity = (groupId: string, itemId: string, size: keyof QuoteItem['sizes'], value: number) => {
 
+      // Mark this group as active for contextual add buttons
+      setActiveGroupId(groupId);
       updateItem(groupId, itemId, {
         sizes: {
           ...itemGroups.find(g => g.id === groupId)?.items.find(i => i.id === itemId)?.sizes!,
@@ -493,10 +507,6 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <h3 className="text-lg font-medium">Quote Items</h3>
-          <Button onClick={addLineItemGroup} className="gap-2 bg-blue-600 hover:bg-blue-700">
-            <Plus className="h-4 w-4" />
-            Create Line Item Group
-          </Button>
         </div>
 
         {/* Quote Items Table */}
@@ -522,35 +532,7 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
             </TableRow>
           </TableHeader>
           <TableBody>
-              {itemGroups.map((group, groupIndex) => [
-                // Group Header Row
-                <TableRow key={`group-header-${group.id}`} className="bg-blue-50 border-b-2 border-blue-200">
-                  <TableCell colSpan={14} className="py-3 px-4 font-medium text-blue-900">
-                    <div className="flex items-center justify-between">
-                      <span>Group {groupIndex + 1}</span>
-                      <div className="flex gap-2">
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
-                          className="gap-2 text-blue-700 border-blue-300 hover:bg-blue-100"
-                          onClick={() => addLineItem(group.id)}
-                        >
-                          <Plus className="h-4 w-4" />
-                          Line Item
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
-                          className="gap-2 text-blue-700 border-blue-300 hover:bg-blue-100"
-                          onClick={() => addImprint(group.id, getFirstItemId(group.id))}
-                        >
-                          <Plus className="h-4 w-4" />
-                          Imprint
-                        </Button>
-                      </div>
-                    </div>
-                  </TableCell>
-                </TableRow>,
+              {itemGroups.map((group) => [
                 // Group Items
                 ...group.items.map((item) => (
                   <TableRow key={item.id} className="border-b hover:bg-gray-50">
@@ -809,43 +791,39 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
         </Table>
         </div>
         {/* Removed global imprint list to prevent duplicate rendering. Imprints now render inline per group above. */}
-        
-        {/* Action Buttons */}
-        <div className="flex justify-center">
+
+        {/* Action Buttons under table: left (Line Item, Imprint), right (Line Item Group) */}
+        <div className="flex items-center justify-between">
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => {
+                const targetGroup = activeGroupId || itemGroups[0]?.id || "";
+                if (targetGroup) addLineItem(targetGroup);
+              }}
+              disabled={itemGroups.length === 0}
+            >
+              <Plus className="h-4 w-4" />
+              Line Item
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => {
+                const targetGroup = activeGroupId || itemGroups[0]?.id || "";
+                if (targetGroup) addImprint(targetGroup, getFirstItemId(targetGroup));
+              }}
+              disabled={itemGroups.length === 0}
+            >
+              <Plus className="h-4 w-4" />
+              Imprint
+            </Button>
+          </div>
           <Button onClick={addLineItemGroup} variant="outline" className="gap-2">
             <Plus className="h-4 w-4" />
             Line Item Group
           </Button>
-        </div>
-
-        {/* Invoice Summary */}
-        <div className="bg-blue-50 p-4 rounded-lg">
-          <div className="text-center font-medium text-blue-800 mb-4">Invoice Summary</div>
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span>Sub Total:</span>
-              <span className="font-medium">${calculateSubtotal().toFixed(2)}</span>
-                                  </div>
-            <div className="flex justify-between">
-              <span>Shipping:</span>
-              <span>$0.00</span>
-                              </div>
-            <div className="flex justify-between">
-              <span>Discount:</span>
-              <div className="flex gap-2">
-                <Input type="number" placeholder="%" className="w-16" />
-                <Input type="number" placeholder="$" className="w-20" />
-                          </div>
-            </div>
-            <div className="flex justify-between">
-              <span>Sales Tax:</span>
-              <Input type="number" placeholder="%" className="w-16" />
-            </div>
-            <div className="flex justify-between font-medium text-lg">
-              <span>Total Due:</span>
-              <span>${calculateSubtotal().toFixed(2)}</span>
-            </div>
-          </div>
         </div>
 
         {itemGroups.length === 0 && (
@@ -881,7 +859,53 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
           </Button>
         </div>
             </DialogHeader>
-            
+
+            {/* Target selection for where to attach this imprint */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Attach to Group</label>
+                  <Select
+                    value={selectedGroupId}
+                    onValueChange={(value) => {
+                      setSelectedGroupId(value);
+                      setActiveGroupId(value);
+                      const first = getFirstItemId(value);
+                      setSelectedItemId(first);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select group" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {itemGroups.map((g, idx) => (
+                        <SelectItem key={g.id} value={g.id}>Group {idx + 1}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Attach to Item</label>
+                  <Select
+                    value={selectedItemId}
+                    onValueChange={(value) => setSelectedItemId(value)}
+                    disabled={!selectedGroupId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select item" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(itemGroups.find(g => g.id === selectedGroupId)?.items || []).map((it) => (
+                        <SelectItem key={it.id} value={it.id}>
+                          {(it.itemNumber || 'Item')} — {(it.description || 'No description')}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-6">
               {/* Imprint Details Section */}
               <div className="space-y-4">

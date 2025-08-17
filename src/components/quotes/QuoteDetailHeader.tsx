@@ -45,7 +45,7 @@ export function QuoteDetailHeader({
 }: QuoteDetailHeaderProps) {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { deleteQuote } = useQuotes();
+  const { deleteQuote, updateQuoteStatus } = useQuotes();
   const [status, setStatus] = useState(initialStatus);
   const [packingSlipOpen, setPackingSlipOpen] = useState(false);
   const [shippingLabelOpen, setShippingLabelOpen] = useState(false);
@@ -210,8 +210,14 @@ export function QuoteDetailHeader({
     });
   };
   
-  const handleStatusChange = (newStatus: string) => {
+  const handleStatusChange = async (newStatus: string) => {
     setStatus(newStatus);
+    try {
+      await updateQuoteStatus(quoteId, newStatus as any);
+    } catch (e) {
+      // revert on error
+      setStatus(initialStatus);
+    }
   };
   
   return (
@@ -250,7 +256,7 @@ export function QuoteDetailHeader({
         </Sheet>
       </div>
       <div className="flex items-center gap-2">
-        <QuoteStatusDropdown currentStatus={status} onStatusChange={handleStatusChange} />
+        <QuoteStatusDropdown currentStatus={status} onStatusChange={handleStatusChange} useDbStatuses />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline">

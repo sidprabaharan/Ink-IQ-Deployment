@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { QuoteHeader } from "@/components/quotes/QuoteHeader";
 import { QuoteDetailHeader } from "@/components/quotes/QuoteDetailHeader";
+import { useInvoices } from "@/context/InvoicesContext";
 import { CompanyInfoCard } from "@/components/quotes/CompanyInfoCard";
 import { QuoteDetailsCard } from "@/components/quotes/QuoteDetailsCard";
 import { CustomerInfoCard } from "@/components/quotes/CustomerInfoCard";
@@ -20,6 +21,7 @@ export default function QuoteDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getQuote } = useQuotes();
+  const { createFromQuote } = useInvoices();
   const { customers, fetchCustomers } = useCustomers();
   const { user } = useAuth();
   
@@ -534,6 +536,20 @@ export default function QuoteDetail() {
           customerInfo={customerInfoForPacking}
           items={quote.items || []}
         />
+        <div className="flex justify-end mb-4">
+          <Button
+            className="bg-inkiq-primary hover:bg-inkiq-primary/90 gap-2"
+            onClick={async () => {
+              if (!id) return;
+              const result = await createFromQuote(id);
+              if (result.success && result.invoice_id) {
+                navigate(`/invoices/${result.invoice_id}`);
+              }
+            }}
+          >
+            Create Invoice
+          </Button>
+        </div>
 
         {/* Create New Quote Button */}
         <div className="flex justify-end">

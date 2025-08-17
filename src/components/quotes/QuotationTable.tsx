@@ -5,6 +5,7 @@ import { QuotationStatusBadge } from "./QuotationStatusBadge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useQuotes } from "@/context/QuotesContext";
+import { useInvoices } from "@/context/InvoicesContext";
 
 interface LineItem {
   id: string;
@@ -179,26 +180,36 @@ interface QuotationTableProps {
 
 export function QuotationTable({ isInvoicesPage = false }: QuotationTableProps) {
   const navigate = useNavigate();
-  const { quotes, loading, error } = useQuotes();
+  const { quotes, loading: quotesLoading, error: quotesError } = useQuotes();
+  const { invoices, loading: invoicesLoading, error: invoicesError } = useInvoices();
+
+  const formatCurrency = (value: any) => {
+    const num = typeof value === 'number' ? value : Number(value || 0);
+    if (Number.isNaN(num)) return '$0.00';
+    return `$${num.toFixed(2)}`;
+  };
+
+  const formatDate = (value: any) => {
+    if (!value) return 'N/A';
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? 'N/A' : d.toLocaleDateString();
+  };
   
   // Filter data based on whether we're on the Quotes or Invoices page
-  const quotationsData = quotes
-    .filter(quotation => {
-      if (isInvoicesPage) {
-        // For invoices page, show everything that's NOT a quote status
-        return !quoteStatuses.includes(quotation.status);
-      } else {
-        // For quotes page, only show quote statuses
-        return quoteStatuses.includes(quotation.status);
-      }
-    })
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()); // Sort by creation date descending
+  const quotationsData = isInvoicesPage
+    ? (invoices || []).slice().sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    : (quotes || [])
+        .filter((quotation) => quoteStatuses.includes(quotation.status))
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const handleRowClick = (quotationId: string) => {
     navigate(`/quotes/${quotationId}`);
   };
 
   // Show loading state
+  const loading = isInvoicesPage ? invoicesLoading : quotesLoading;
+  const error = isInvoicesPage ? invoicesError : quotesError;
+
   if (loading) {
     return (
       <div className="bg-white rounded-lg border overflow-hidden">
@@ -276,39 +287,50 @@ export function QuotationTable({ isInvoicesPage = false }: QuotationTableProps) 
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {quotationsData.map((quotation) => (
+            {quotationsData.map((quotation: any) => {
+              const idDisplay = isInvoicesPage ? (quotation.invoice_number || quotation.id) : (quotation.quote_number || quotation.id);
+              const customerDisplay =
+                quotation.customer_name || quotation.customer_company || quotation.customer || quotation.customer_id || 'Unknown Customer';
+              const dueDateRaw = isInvoicesPage
+                ? (quotation.due_date || quotation.invoice_date || quotation.created_at)
+                : (quotation.customer_due_date || quotation.production_due_date || quotation.valid_until || quotation.created_at);
+              const ownerDisplay = quotation.created_by_full_name || quotation.created_by || 'N/A';
+              const totalDisplay = isInvoicesPage ? formatCurrency(quotation.total_amount) : formatCurrency(quotation.final_amount ?? quotation.total_amount);
+              const outstandingDisplay = isInvoicesPage ? formatCurrency(quotation.balance_due ?? quotation.total_amount) : totalDisplay;
+              return (
                 <tr 
                   key={quotation.id}
                   className="hover:bg-gray-50 cursor-pointer" 
-                  onClick={() => handleRowClick(quotation.id)}
+                  onClick={() => navigate(isInvoicesPage ? `/invoices/${quotation.id}` : `/quotes/${quotation.id}`)}
                 >
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">
-                      {quotation.quote_number}
+                      {idDisplay}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{quotation.customer_name || 'Unknown Customer'}</div>
+                    <div className="text-sm text-gray-900">{customerDisplay}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-900">
-                      {quotation.valid_until ? new Date(quotation.valid_until).toLocaleDateString() : 'N/A'}
+                      {formatDate(dueDateRaw)}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{quotation.created_by_full_name || 'N/A'}</div>
+                    <div className="text-sm text-gray-900">{ownerDisplay}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">${quotation.final_amount?.toFixed(2) || '0.00'}</div>
+                    <div className="text-sm text-gray-900">{totalDisplay}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">${quotation.final_amount?.toFixed(2) || '0.00'}</div>
+                    <div className="text-sm text-gray-900">{outstandingDisplay}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <QuotationStatusBadge status={quotation.status} />
                   </td>
                 </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
 

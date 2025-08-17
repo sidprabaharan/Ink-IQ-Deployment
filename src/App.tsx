@@ -11,6 +11,7 @@ import NewQuote from "@/pages/NewQuote";
 import QuoteDetail from "@/pages/QuoteDetail";
 import WorkOrder from "@/pages/WorkOrder";
 import Invoices from "@/pages/Invoices";
+import InvoiceDetail from "@/pages/InvoiceDetail";
 import Customers from "@/pages/Customers";
 
 import Tasks from "@/pages/Tasks";
@@ -32,6 +33,7 @@ import { CartManagerProvider } from "./context/CartManagerContext";
 import { AuthProvider } from "./context/AuthContext";
 import { OrganizationProvider } from "./context/OrganizationContext";
 import { QuotesProvider } from "./context/QuotesContext";
+import { InvoicesProvider } from "./context/InvoicesContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 
 import "./App.css";
@@ -48,6 +50,7 @@ function App() {
               <CustomersProvider>
                 <CartManagerProvider>
                   <QuotesProvider>
+                  <InvoicesProvider>
                   <Routes>
                   {/* Authentication Routes */}
                   <Route path="/login" element={<Login />} />
@@ -61,6 +64,7 @@ function App() {
                   <Route path="/quotes/:id" element={<ProtectedRoute><AppLayout><QuoteDetail /></AppLayout></ProtectedRoute>} />
                   <Route path="/work-orders/:id" element={<ProtectedRoute><WorkOrder /></ProtectedRoute>} />
                   <Route path="/invoices" element={<ProtectedRoute><AppLayout><Invoices /></AppLayout></ProtectedRoute>} />
+                  <Route path="/invoices/:id" element={<ProtectedRoute><AppLayout><InvoiceDetail /></AppLayout></ProtectedRoute>} />
                   <Route path="/customers" element={<ProtectedRoute><AppLayout><Customers /></AppLayout></ProtectedRoute>} />
                   
                   <Route path="/leads" element={<ProtectedRoute><AppLayout><Leads /></AppLayout></ProtectedRoute>} />
@@ -76,6 +80,7 @@ function App() {
                   <Route path="/settings" element={<ProtectedRoute><AppLayout><Settings /></AppLayout></ProtectedRoute>} />
                   <Route path="*" element={<ProtectedRoute><AppLayout><NotFound /></AppLayout></ProtectedRoute>} />
                 </Routes>
+                  </InvoicesProvider>
                   </QuotesProvider>
               </CartManagerProvider>
             </CustomersProvider>

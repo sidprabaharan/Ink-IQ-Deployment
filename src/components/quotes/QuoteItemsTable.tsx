@@ -300,6 +300,20 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
     });
   };
   const renderItemGroup = (group: ItemGroup, groupIndex: number) => {
+    const rawImprints = group.imprints || [];
+    const visibleImprints = rawImprints.filter((imp: any) => {
+      const hasText = (imp?.method && String(imp.method).trim() !== '') || (imp?.location && String(imp.location).trim() !== '');
+      const fileCount = (imp?.customerArt?.length || 0) + (imp?.productionFiles?.length || 0) + (imp?.proofMockup?.length || 0);
+      const hasNotes = !!(imp?.notes && String(imp.notes).trim() !== '');
+      const keep = hasText || fileCount > 0 || hasNotes;
+      if (!keep) {
+        console.debug('[QuoteItemsTable] filtering blank imprint card', { imprintId: imp?.id, method: imp?.method, location: imp?.location, fileCount, hasNotes });
+      }
+      return keep;
+    });
+    if (rawImprints.length > 0) {
+      console.debug('[QuoteItemsTable] group imprints', { groupIndex, total: rawImprints.length, visible: visibleImprints.length, ids: rawImprints.map((i: any) => i?.id) });
+    }
     return (
       <div key={group.id} className="mb-8 border rounded-md overflow-hidden">
         {/* Group Title */}
@@ -418,14 +432,14 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
               return rows;
             })}
 
-            {group.imprints && group.imprints.length > 0 && (
+            {visibleImprints.length > 0 && (
               <TableRow className="border-b">
                 <TableCell colSpan={16} className="p-6 bg-gray-50">
                   <div className="space-y-6">
                     <div className="border-b pb-4">
                       <h3 className="text-lg font-semibold text-gray-900">Imprint Details</h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                        {group.imprints.map((imprint) => (
+                        {visibleImprints.map((imprint) => (
                           <div key={imprint.id} className="border rounded-md p-3 bg-white">
                             <div className="grid grid-cols-2 gap-3 text-sm">
                               <div>
@@ -456,7 +470,7 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
                                 <div className="flex flex-wrap gap-2 mt-1">
                                   {imprint.customerArt.map((f: any, idx: number) => (
                                     <div key={`ca-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white">
-                                      {typeof f.url === 'string' && (f.type?.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp)$/i.test(f.name || f.file_name || '')) ? (
+                                      {typeof f.url === 'string' ? (
                                         <img src={f.url} alt={f.name || f.file_name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(f.url, f.name || f.file_name || '')} />
                                       ) : (
                                         <span className="text-xs">{(f.name || f.file_name || 'file').split('.').pop()?.toUpperCase()}</span>
@@ -474,7 +488,7 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
                                 <div className="flex flex-wrap gap-2 mt-1">
                                   {imprint.productionFiles.map((f: any, idx: number) => (
                                     <div key={`pf-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white">
-                                      {typeof f.url === 'string' && (f.type?.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp)$/i.test(f.name || f.file_name || '')) ? (
+                                      {typeof f.url === 'string' ? (
                                         <img src={f.url} alt={f.name || f.file_name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(f.url, f.name || f.file_name || '')} />
                                       ) : (
                                         <span className="text-xs">{(f.name || f.file_name || 'file').split('.').pop()?.toUpperCase()}</span>
@@ -492,7 +506,7 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
                                 <div className="flex flex-wrap gap-2 mt-1">
                                   {imprint.proofMockup.map((f: any, idx: number) => (
                                     <div key={`pm-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white">
-                                      {typeof f.url === 'string' && (f.type?.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp)$/i.test(f.name || f.file_name || '')) ? (
+                                      {typeof f.url === 'string' ? (
                                         <img src={f.url} alt={f.name || f.file_name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(f.url, f.name || f.file_name || '')} />
                                       ) : (
                                         <span className="text-xs">{(f.name || f.file_name || 'file').split('.').pop()?.toUpperCase()}</span>
