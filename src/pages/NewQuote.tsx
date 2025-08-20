@@ -19,6 +19,9 @@ import { getQuoteById, QuotationData } from "@/components/quotes/QuoteData";
 import { clearQuoteDraft, cleanupOldStorageData } from '@/utils/quoteStorage';
 import { quoteStorage } from "@/lib/quoteStorage";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
+
+
 
 // Sample data for demonstration purposes
 const generateNewQuoteId = () => {
@@ -58,6 +61,7 @@ function NewQuoteContent() {
       }, 100);
     }
   }, [isEditMode]);
+  
   
   // State for quote dates
   const [quoteDates, setQuoteDates] = useState<{

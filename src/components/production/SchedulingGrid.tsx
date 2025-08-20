@@ -8,9 +8,14 @@ interface SchedulingGridProps {
   selectedDate: Date;
   selectedMethod: DecorationMethod;
   selectedStage: ProductionStage;
+  terminalStageId?: ProductionStage;
   onJobSchedule: (jobId: string, equipmentId: string, startTime: Date, endTime: Date) => void;
   onJobUnschedule: (jobId: string) => void;
   onStageAdvance: (jobId: string) => void;
+  onJobStart?: (jobId: string) => void;
+  onJobMarkDone?: (jobId: string) => void;
+  onJobBlockToggle?: (jobId: string, block: boolean) => void;
+  onJobReopen?: (jobId: string) => void;
   onJobClick?: (job: ImprintJob) => void;
 }
 
@@ -78,9 +83,14 @@ export function SchedulingGrid({
   selectedDate, 
   selectedMethod, 
   selectedStage,
+  terminalStageId,
   onJobSchedule,
   onJobUnschedule,
   onStageAdvance,
+  onJobStart,
+  onJobMarkDone,
+  onJobBlockToggle,
+  onJobReopen,
   onJobClick
 }: SchedulingGridProps) {
   const equipment = equipmentConfig[selectedMethod]?.[selectedStage] || [];
@@ -103,6 +113,11 @@ export function SchedulingGrid({
               onJobSchedule={onJobSchedule}
               onJobUnschedule={onJobUnschedule}
               onStageAdvance={onStageAdvance}
+              terminalStageId={terminalStageId}
+              onJobStart={onJobStart}
+              onJobMarkDone={onJobMarkDone}
+              onJobBlockToggle={onJobBlockToggle}
+              onJobReopen={onJobReopen}
               onJobClick={onJobClick}
             />
           ))

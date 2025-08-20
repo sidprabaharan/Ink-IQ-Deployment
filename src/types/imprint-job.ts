@@ -22,7 +22,7 @@ export interface ImprintJob {
   orderId: string;
   lineItemGroupId: string;
   imprintSectionId: string;
-  status: "unscheduled" | "scheduled" | "in_progress" | "completed";
+  status: "unscheduled" | "scheduled" | "in_progress" | "completed" | "done" | "blocked" | "canceled";
   customerName: string;
   description: string;
   decorationMethod: DecorationMethod;
@@ -47,6 +47,10 @@ export interface ImprintJob {
   dependsOnJobs?: string[];
   blocksJobs?: string[];
   orderGroupColor?: string;
+  assignedUserId?: string;
+  jobCreatedAt?: Date;
+  quoteLastUpdatedAt?: Date;
+  cancelReason?: string;
   
   // Visual elements
   mockupImage?: string;

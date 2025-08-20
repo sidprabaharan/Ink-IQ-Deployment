@@ -191,6 +191,16 @@ export function QuotationTable({ isInvoicesPage = false }: QuotationTableProps) 
 
   const formatDate = (value: any) => {
     if (!value) return 'N/A';
+    if (typeof value === 'string') {
+      const m = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) {
+        const y = parseInt(m[1], 10);
+        const mo = parseInt(m[2], 10) - 1;
+        const d = parseInt(m[3], 10);
+        const local = new Date(y, mo, d);
+        return local.toLocaleDateString();
+      }
+    }
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? 'N/A' : d.toLocaleDateString();
   };
@@ -291,10 +301,22 @@ export function QuotationTable({ isInvoicesPage = false }: QuotationTableProps) 
               const idDisplay = isInvoicesPage ? (quotation.invoice_number || quotation.id) : (quotation.quote_number || quotation.id);
               const customerDisplay =
                 quotation.customer_name || quotation.customer_company || quotation.customer || quotation.customer_id || 'Unknown Customer';
+              // Prefer customer due date; fallback to other meaningful dates if missing
               const dueDateRaw = isInvoicesPage
                 ? (quotation.due_date || quotation.invoice_date || quotation.created_at)
-                : (quotation.customer_due_date || quotation.production_due_date || quotation.valid_until || quotation.created_at);
+                : (quotation.customer_due_date || quotation.production_due_date || quotation.payment_due_date || quotation.valid_until || quotation.created_at);
               const ownerDisplay = quotation.created_by_full_name || quotation.created_by || 'N/A';
+              // Debug row-level fields
+              console.debug('[QuotationTable] row', {
+                id: quotation.id,
+                status: quotation.status,
+                customer_due_date: quotation.customer_due_date,
+                production_due_date: quotation.production_due_date,
+                payment_due_date: quotation.payment_due_date,
+                valid_until: quotation.valid_until,
+                created_at: quotation.created_at,
+                resolved_due: dueDateRaw,
+              });
               const totalDisplay = isInvoicesPage ? formatCurrency(quotation.total_amount) : formatCurrency(quotation.final_amount ?? quotation.total_amount);
               const outstandingDisplay = isInvoicesPage ? formatCurrency(quotation.balance_due ?? quotation.total_amount) : totalDisplay;
               return (

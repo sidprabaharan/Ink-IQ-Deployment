@@ -27,6 +27,7 @@ import { BoxLabelDialog } from "./BoxLabelDialog";
 import { OrderTasksDialog } from "@/components/tasks/OrderTasksDialog";
 import { DecoratorSelectionDialog } from "./DecoratorSelectionDialog";
 // Production scheduling functionality moved to PrintavoPowerScheduler
+import { supabase } from "@/lib/supabase";
 
 interface QuoteDetailHeaderProps {
   quoteId: string; // UUID for database operations
@@ -291,7 +292,27 @@ export function QuoteDetailHeader({
               <ListPlus className="h-4 w-4 mr-2" />
               Add Line Items to PO
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowProductionScheduling(true)}>
+            <DropdownMenuItem
+              onClick={async () => {
+                // Create jobs for this quote; exclude items without imprint/decoration
+                try {
+                  const { error, data } = await supabase.rpc('create_jobs_from_quote', { p_quote_id: quoteId });
+                  if (error) throw error;
+                  // Emit telemetry for each created job if returned
+                  try {
+                    const { track } = await import('@/lib/utils');
+                    if (Array.isArray(data)) {
+                      (data as any[]).forEach(row => track('job_created_from_quote', { quote_id: quoteId, line_item_id: row.quote_item_id, job_id: row.id }));
+                    } else {
+                      track('job_created_from_quote', { quote_id: quoteId });
+                    }
+                  } catch {}
+                  toast({ title: 'Production scheduled', description: 'Jobs created from line items. See Unscheduled Jobs in Production.', });
+                } catch (e: any) {
+                  toast({ title: 'Could not schedule production', description: e?.message || 'Unknown error', variant: 'destructive' });
+                }
+              }}
+            >
               <Calendar className="h-4 w-4 mr-2" />
               Schedule Production
             </DropdownMenuItem>

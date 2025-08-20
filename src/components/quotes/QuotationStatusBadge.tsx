@@ -33,43 +33,26 @@ const statusVariants = cva(
 );
 
 export function QuotationStatusBadge({ status }: QuotationStatusBadgeProps) {
-  // Function to convert status to a variant key (lowercase, no spaces)
-  const getVariant = (status: string): string => {
-    const normalizedStatus = status.toLowerCase().replace(/\s+/g, '');
-    
-    // Map all artwork variations to a single "artwork" variant
-    if (normalizedStatus.includes('artwork')) {
-      return 'artwork';
-    }
-    
-    // Map other statuses
-    const statusMap: Record<string, string> = {
-      'quote': 'quote',
-      'quoteapprovalsent': 'quoteApprovalSent',
-      'quoteapproved': 'quoteApproved',
-      'purchaseorders': 'purchaseOrders',
-      'production': 'production',
-      'shipping': 'shipping',
-      'complete': 'complete',
-      'miscellaneous': 'miscellaneous',
-      'canceled': 'canceled',
-      'achievedquote': 'achievedQuote',
-      'shortcollections': 'shortCollections',
-      'onhold': 'onHold',
-    };
-    
-    return statusMap[normalizedStatus] || 'default';
+  const normalizedStatus = (status || '').toLowerCase();
+  // Map DB quote statuses to visual variants
+  const map: Record<string, string> = {
+    draft: 'quote',
+    sent: 'quoteApprovalSent',
+    pending_approval: 'quoteApprovalSent',
+    approved: 'quoteApproved',
+    rejected: 'onHold',
+    expired: 'onHold',
+    converted: 'production',
   };
-
-  const variant = getVariant(status);
-  
-  // For display purposes, if the status contains "Artwork-" or similar variations,
-  // just show "Artwork" instead
-  const displayStatus = status.toLowerCase().includes('artwork') ? 'Artwork' : status;
-  
+  const variant = map[normalizedStatus] || 'default';
+  const display = status
+    ? status
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+    : 'Unknown';
   return (
     <span className={statusVariants({ variant: variant as any })}>
-      {displayStatus}
+      {display}
     </span>
   );
 }

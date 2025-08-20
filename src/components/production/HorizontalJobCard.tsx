@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ImprintJob } from "@/types/imprint-job";
-import { Clock, Calendar, Package, FileCheck, AlertCircle, ChevronRight, X } from "lucide-react";
+import { Clock, Calendar, Package, FileCheck, AlertCircle, ChevronRight, X, FlagTriangleRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { getJobReadinessStatus } from "@/utils/stageDependencyUtils";
@@ -29,6 +29,8 @@ export function HorizontalJobCard({
 }: HorizontalJobCardProps) {
   const isPriority = job.priority === "high";
   const isOverdue = job.dueDate < new Date() && job.status !== "completed";
+  const isBlocked = (job.status as any) === 'blocked';
+  const isCanceled = (job.status as any) === 'canceled';
   
   // Get dependency status for unscheduled jobs
   const readinessStatus = variant === "unscheduled" ? getJobReadinessStatus(job, allJobs) : { isReady: true };
@@ -49,9 +51,10 @@ export function HorizontalJobCard({
         "bg-card border border-border rounded-lg p-3 transition-all hover:shadow-sm relative",
         "flex items-center gap-3 min-h-[60px]", // Horizontal layout
         variant === "scheduled" && "bg-muted/50 border-muted",
-        variant === "unscheduled" && (readinessStatus.isReady 
+        variant === "unscheduled" && (!isBlocked ? (readinessStatus.isReady 
           ? "bg-green-50 border-green-200" 
-          : "bg-red-50 border-red-200"),
+          : "bg-red-50 border-red-200") : "bg-yellow-50 border-yellow-300"),
+        isCanceled && "opacity-60",
         isPriority && "border-orange-300 bg-orange-50",
         isOverdue && "border-red-300 bg-red-50",
         draggable && "cursor-grab active:cursor-grabbing",
@@ -104,6 +107,12 @@ export function HorizontalJobCard({
 
       {/* Priority and status indicators */}
       <div className="flex items-center gap-1 flex-shrink-0">
+        {isBlocked && (
+          <FlagTriangleRight className="h-3 w-3 text-yellow-600" />
+        )}
+        {isCanceled && (
+          <Badge variant="outline" className="text-xs px-1 py-0 h-4 text-red-600 border-red-300">CANCELED</Badge>
+        )}
         {variant === "unscheduled" && !readinessStatus.isReady && (
           <Badge variant="destructive" className="text-xs px-1 py-0 h-4">
             WAITING
@@ -135,6 +144,12 @@ export function HorizontalJobCard({
         <div className="text-xs text-muted-foreground truncate">
           {job.description}
         </div>
+        {job.quoteLastUpdatedAt && job.jobCreatedAt && job.quoteLastUpdatedAt > job.jobCreatedAt && (
+          <div className="text-[10px] text-amber-700 mt-1">Quote was edited after this job was created. Review for resync.</div>
+        )}
+        {job.cancelReason && (
+          <div className="text-[10px] text-red-700 mt-1">{job.cancelReason}</div>
+        )}
       </div>
 
       {/* Quantity and method */}

@@ -71,6 +71,26 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
     console.debug("[QuoteItemsTable] mount - itemGroups:", itemGroups?.length || 0);
   }, [itemGroups]);
 
+  // Helper to resolve a displayable URL from various shapes (library-signed URLs or File objects)
+  const resolveFileUrl = (file: any): string | null => {
+    if (!file) return null;
+    if (typeof file === 'string') return file;
+    const candidates = [file?.url, file?.signedUrl, file?.publicUrl, file?.signed_url, file?.public_url];
+    const found = candidates.find((u) => typeof u === 'string' && u.length > 0);
+    if (found) return found as string;
+    try {
+      if (file instanceof File || file instanceof Blob) {
+        return URL.createObjectURL(file);
+      }
+    } catch {}
+    return null;
+  };
+
+  const resolveFileName = (file: any, fallback: string): string => {
+    if (!file) return fallback;
+    return (file?.name || file?.file_name || fallback) as string;
+  };
+
   // Helper function to get total quantity for an item
   const getTotalQuantity = (sizes: QuoteItem['sizes']) => {
     return Object.values(sizes).reduce((sum, qty) => sum + qty, 0);
@@ -251,6 +271,34 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
       title: "Issue Resolved",
       description: "Stock issue has been marked as resolved",
     });
+  };
+
+  const handleDeleteArtwork = async (file: any) => {
+    try {
+      if (!file || !file.url) return;
+      // Try to infer storage path: signed URLs contain the path after '/object/sign/artwork/'
+      let path: string | null = null;
+      if (file.path) {
+        path = file.path;
+      } else if (typeof file.url === 'string') {
+        const m = file.url.match(/\/object\/sign\/artwork\/([^?]+)/);
+        if (m && m[1]) path = decodeURIComponent(m[1]);
+      }
+      if (!path) {
+        console.warn('[QuoteItemsTable] Could not resolve storage path for deletion', file);
+        return;
+      }
+      const { error } = await (await import('@/lib/supabase')).supabase.storage.from('artwork').remove([path]);
+      if (error) {
+        console.error('[QuoteItemsTable] Delete error', error);
+        return;
+      }
+      // Optimistically remove from UI by clearing its url so filter/renderer hides it
+      file.url = '';
+      setLightboxSrc(null);
+    } catch (e) {
+      console.error('[QuoteItemsTable] Delete exception', e);
+    }
   };
 
   const openLightbox = (url: string, name: string) => {
@@ -468,15 +516,22 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
                               <div className="mt-2">
                                 <span className="font-medium text-sm">Customer Art:</span>
                                 <div className="flex flex-wrap gap-2 mt-1">
-                                  {imprint.customerArt.map((f: any, idx: number) => (
-                                    <div key={`ca-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white">
-                                      {typeof f.url === 'string' ? (
-                                        <img src={f.url} alt={f.name || f.file_name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(f.url, f.name || f.file_name || '')} />
-                                      ) : (
-                                        <span className="text-xs">{(f.name || f.file_name || 'file').split('.').pop()?.toUpperCase()}</span>
+                                  {imprint.customerArt.map((f: any, idx: number) => {
+                                    const src = resolveFileUrl(f);
+                                    const name = resolveFileName(f, `img-${idx}`);
+                                    return (
+                                      <div key={`ca-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white relative group">
+                                        {src ? (
+                                          <>
+                                            <img src={src} alt={name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(src, name)} />
+                                            <button className="absolute top-0 right-0 m-0.5 px-1 text-[10px] bg-red-600 text-white rounded opacity-0 group-hover:opacity-100" onClick={(e)=>{e.stopPropagation(); handleDeleteArtwork(f);}}>✕</button>
+                                          </>
+                                        ) : (
+                                          <span className="text-xs">{(name || 'file').split('.').pop()?.toUpperCase()}</span>
                                       )}
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}
@@ -486,15 +541,22 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
                               <div className="mt-2">
                                 <span className="font-medium text-sm">Production Files:</span>
                                 <div className="flex flex-wrap gap-2 mt-1">
-                                  {imprint.productionFiles.map((f: any, idx: number) => (
-                                    <div key={`pf-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white">
-                                      {typeof f.url === 'string' ? (
-                                        <img src={f.url} alt={f.name || f.file_name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(f.url, f.name || f.file_name || '')} />
-                                      ) : (
-                                        <span className="text-xs">{(f.name || f.file_name || 'file').split('.').pop()?.toUpperCase()}</span>
+                                  {imprint.productionFiles.map((f: any, idx: number) => {
+                                    const src = resolveFileUrl(f);
+                                    const name = resolveFileName(f, `prod-${idx}`);
+                                    return (
+                                      <div key={`pf-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white relative group">
+                                        {src ? (
+                                          <>
+                                            <img src={src} alt={name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(src, name)} />
+                                            <button className="absolute top-0 right-0 m-0.5 px-1 text-[10px] bg-red-600 text-white rounded opacity-0 group-hover:opacity-100" onClick={(e)=>{e.stopPropagation(); handleDeleteArtwork(f);}}>✕</button>
+                                          </>
+                                        ) : (
+                                          <span className="text-xs">{(name || 'file').split('.').pop()?.toUpperCase()}</span>
                                       )}
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}
@@ -504,15 +566,22 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
                               <div className="mt-2">
                                 <span className="font-medium text-sm">Proof/Mockup:</span>
                                 <div className="flex flex-wrap gap-2 mt-1">
-                                  {imprint.proofMockup.map((f: any, idx: number) => (
-                                    <div key={`pm-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white">
-                                      {typeof f.url === 'string' ? (
-                                        <img src={f.url} alt={f.name || f.file_name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(f.url, f.name || f.file_name || '')} />
-                                      ) : (
-                                        <span className="text-xs">{(f.name || f.file_name || 'file').split('.').pop()?.toUpperCase()}</span>
+                                  {imprint.proofMockup.map((f: any, idx: number) => {
+                                    const src = resolveFileUrl(f);
+                                    const name = resolveFileName(f, `mock-${idx}`);
+                                    return (
+                                      <div key={`pm-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center bg-white relative group">
+                                        {src ? (
+                                          <>
+                                            <img src={src} alt={name} className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(src, name)} />
+                                            <button className="absolute top-0 right-0 m-0.5 px-1 text-[10px] bg-red-600 text-white rounded opacity-0 group-hover:opacity-100" onClick={(e)=>{e.stopPropagation(); handleDeleteArtwork(f);}}>✕</button>
+                                          </>
+                                        ) : (
+                                          <span className="text-xs">{(name || 'file').split('.').pop()?.toUpperCase()}</span>
                                       )}
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}

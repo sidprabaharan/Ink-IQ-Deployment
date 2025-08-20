@@ -118,20 +118,53 @@ create index if not exists idx_invoices_due_date on public.invoices(due_date);
 create index if not exists idx_invoice_items_invoice on public.invoice_items(invoice_id);
 create index if not exists idx_invoice_payments_invoice on public.invoice_payments(invoice_id);
 
+-- Atomic invoice number counters (per org per year)
+create table if not exists public.invoice_counters (
+  org_id uuid not null references public.orgs(id) on delete cascade,
+  yr text not null,
+  last_seq int not null default 0,
+  primary key(org_id, yr)
+);
+
+alter table public.invoice_counters enable row level security;
+do $$ begin
+  create policy "org members can use invoice_counters" on public.invoice_counters
+    for all to public
+    using (org_id in (select org_id from public.org_users where user_id = auth.uid() and status='active'))
+    with check (org_id in (select org_id from public.org_users where user_id = auth.uid() and status='active'));
+exception when duplicate_object then null; end $$;
+
 -- Helper: generate invoice number (simple sequential per year per org)
 create or replace function public.generate_invoice_number(p_org_id uuid)
 returns text language plpgsql as $$
 declare
   yr text := to_char(now(), 'YYYY');
-  seq int;
+  new_seq int;
   candidate text;
 begin
-  select coalesce(max(split_part(invoice_number, '-', 3)::int), 0) + 1
-  into seq
-  from public.invoices
-  where org_id = p_org_id and split_part(invoice_number, '-', 2) = yr;
+  -- Atomically compute next sequence using existing invoices as baseline
+  insert into public.invoice_counters(org_id, yr, last_seq)
+  values (
+    p_org_id,
+    yr,
+    (
+      select coalesce(max(split_part(invoice_number, '-', 3)::int), 0) + 1
+      from public.invoices
+      where org_id = p_org_id and split_part(invoice_number, '-', 2) = yr
+    )
+  )
+  on conflict (org_id, yr)
+  do update set last_seq = greatest(
+    public.invoice_counters.last_seq,
+    (
+      select coalesce(max(split_part(invoice_number, '-', 3)::int), 0)
+      from public.invoices
+      where org_id = p_org_id and split_part(invoice_number, '-', 2) = yr
+    )
+  ) + 1
+  returning last_seq into new_seq;
 
-  candidate := 'INV-' || yr || '-' || lpad(seq::text, 5, '0');
+  candidate := 'INV-' || yr || '-' || lpad(new_seq::text, 5, '0');
   return candidate;
 end$$;
 
@@ -148,14 +181,28 @@ begin
     raise exception 'Quote not found';
   end if;
   v_number := public.generate_invoice_number(v_org);
-  insert into public.invoices(id, org_id, quote_id, customer_id, invoice_number, status, invoice_date, due_date, subtotal, tax_amount, discount_amount, shipping_amount, total_amount, balance_due)
-  select v_new_id, q.org_id, q.id, q.customer_id, v_number, 'draft', coalesce(p_invoice_date, now()), p_due_date,
-         coalesce(sum(qi.total_price),0), coalesce(q.tax_amount,0), coalesce(q.discount_amount,0), 0,
-         coalesce(q.final_amount, coalesce(sum(qi.total_price),0)), coalesce(q.final_amount, coalesce(sum(qi.total_price),0))
-  from public.quotes q
-  left join public.quote_items qi on qi.quote_id = q.id
-  where q.id = p_quote_id
-  group by q.id, q.org_id, q.tax_amount, q.discount_amount, q.final_amount;
+  -- Insert invoice; if number collision occurs (extreme race), retry with a fresh number
+  begin
+    insert into public.invoices(id, org_id, quote_id, customer_id, invoice_number, status, invoice_date, due_date, subtotal, tax_amount, discount_amount, shipping_amount, total_amount, balance_due)
+    select v_new_id, q.org_id, q.id, q.customer_id, v_number, 'draft', coalesce(p_invoice_date, now()), p_due_date,
+           coalesce(sum(qi.total_price),0), coalesce(q.tax_amount,0), coalesce(q.discount_amount,0), 0,
+           coalesce(q.final_amount, coalesce(sum(qi.total_price),0)), coalesce(q.final_amount, coalesce(sum(qi.total_price),0))
+    from public.quotes q
+    left join public.quote_items qi on qi.quote_id = q.id
+    where q.id = p_quote_id
+    group by q.id, q.org_id, q.tax_amount, q.discount_amount, q.final_amount;
+  exception when unique_violation then
+    -- regenerate once and retry
+    v_number := public.generate_invoice_number(v_org);
+    insert into public.invoices(id, org_id, quote_id, customer_id, invoice_number, status, invoice_date, due_date, subtotal, tax_amount, discount_amount, shipping_amount, total_amount, balance_due)
+    select v_new_id, q.org_id, q.id, q.customer_id, v_number, 'draft', coalesce(p_invoice_date, now()), p_due_date,
+           coalesce(sum(qi.total_price),0), coalesce(q.tax_amount,0), coalesce(q.discount_amount,0), 0,
+           coalesce(q.final_amount, coalesce(sum(qi.total_price),0)), coalesce(q.final_amount, coalesce(sum(qi.total_price),0))
+    from public.quotes q
+    left join public.quote_items qi on qi.quote_id = q.id
+    where q.id = p_quote_id
+    group by q.id, q.org_id, q.tax_amount, q.discount_amount, q.final_amount;
+  end;
 
   -- snapshot items
   insert into public.invoice_items(
@@ -177,7 +224,7 @@ begin
          coalesce(qi.total_price,0),
          coalesce(qi.taxed,true),
          coalesce(qi.xs,0), coalesce(qi.s,0), coalesce(qi.m,0), coalesce(qi.l,0), coalesce(qi.xl,0), coalesce(qi.xxl,0), coalesce(qi.xxxl,0),
-         (qi).group_index, (qi).group_label
+         qi.group_index, qi.group_label
   from public.quote_items qi
   where qi.quote_id = p_quote_id;
 

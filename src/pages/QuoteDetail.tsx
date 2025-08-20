@@ -14,6 +14,7 @@ import { useCustomers } from "@/context/CustomersContext";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
 // LocalStorage image helpers removed; rely on DB only
 import { supabase } from "@/lib/supabase";
 
@@ -24,6 +25,7 @@ export default function QuoteDetail() {
   const { createFromQuote } = useInvoices();
   const { customers, fetchCustomers } = useCustomers();
   const { user } = useAuth();
+  const { toast } = useToast();
   
   const [quote, setQuote] = useState(null);
   const [customer, setCustomer] = useState(null);
@@ -105,6 +107,7 @@ export default function QuoteDetail() {
                 category: cat,
                 url: signedUrl?.signedUrl || null,
                 imprint_id: imprintId,
+                quote_item_id: item.id,
               });
             }
           }
@@ -131,7 +134,24 @@ export default function QuoteDetail() {
           .select('*')
           .eq('quote_item_id', item.id);
         if (!error && data) {
-          result[item.id] = data;
+          // Enrich with library preview signed URL as fallback when no files are attached
+          const enrichedRows: any[] = [];
+          for (const r of data as any[]) {
+            let preview_url: string | null = null;
+            if (r.library_imprint_id) {
+              try {
+                const { data: libDetail } = await supabase.rpc('get_library_imprint_detail', { p_imprint_id: r.library_imprint_id });
+                const previewPath = (libDetail as any)?.imprint?.preview_path;
+                if (previewPath) {
+                  const { data: signed } = await supabase.storage.from('artwork').createSignedUrl(previewPath, 3600);
+                  preview_url = signed?.signedUrl || null;
+                }
+              } catch {}
+            }
+            console.debug('[QuoteDetail] Enriched imprint row', { itemId: item.id, imprintId: r.id, libraryImprintId: r.library_imprint_id, hasPreview: !!preview_url });
+            enrichedRows.push({ ...r, preview_url });
+          }
+          result[item.id] = enrichedRows;
         }
       }
     } catch (e) {
@@ -367,7 +387,24 @@ export default function QuoteDetail() {
         const files = itemArtwork || [];
         const filesForImprint = (imprintId: string | null) => makeFiles((files || []).filter((f: any) => !imprintId || f.imprint_id === imprintId));
         const imprints = rows.length > 0
-          ? rows.map((r: any) => ({
+          ? rows.map((r: any) => {
+              const ca = filesForImprint(r.id).filter((f: any) => f.category === 'customer_art');
+              const pf = filesForImprint(r.id).filter((f: any) => f.category === 'production_files');
+              let pm = filesForImprint(r.id).filter((f: any) => f.category === 'proof_mockup');
+              let usedPreviewFallback = false;
+              // Case 1: No proof/mockup files → use preview
+              if (pm.length === 0 && !!r.preview_url) {
+                pm = [{ id: `${r.id}-preview`, name: 'Preview', url: r.preview_url, type: 'image/jpeg', category: 'proof_mockup' }];
+                usedPreviewFallback = true;
+              }
+              // Case 2: Files exist but none have a usable URL (signing failed or non-image) → still inject preview
+              const hasAnyUrl = [...ca, ...pf, ...pm].some((f: any) => typeof f.url === 'string' && f.url.length > 0);
+              if (!hasAnyUrl && !!r.preview_url) {
+                pm = [{ id: `${r.id}-preview`, name: 'Preview', url: r.preview_url, type: 'image/jpeg', category: 'proof_mockup' }];
+                usedPreviewFallback = true;
+              }
+              console.debug('[QuoteDetail] Built imprint files', { imprintId: r.id, ca: ca.length, pf: pf.length, pm: pm.length, usedPreviewFallback });
+              return {
               id: r.id,
               method: r.method,
               location: r.location || 'N/A',
@@ -375,10 +412,11 @@ export default function QuoteDetail() {
               height: parseFloat(r.height) || 0,
               colorsOrThreads: r.colors_or_threads || 'N/A',
               notes: r.notes || '',
-              customerArt: filesForImprint(r.id).filter((f: any) => f.category === 'customer_art'),
-              productionFiles: filesForImprint(r.id).filter((f: any) => f.category === 'production_files'),
-              proofMockup: filesForImprint(r.id).filter((f: any) => f.category === 'proof_mockup'),
-            }))
+                customerArt: ca,
+                productionFiles: pf,
+                proofMockup: pm,
+              };
+            })
           : [];
         return {
           id: `group-${idx + 1}`,
@@ -459,7 +497,20 @@ export default function QuoteDetail() {
         if (rows.length > 0) {
           rows.forEach((r: any) => {
             console.debug('[QuoteDetail] Adding imprint', { imprintId: r.id, method: r.method, location: r.location });
-            const files = filesForImprint(r.id);
+            const ca = filesForImprint(r.id).filter((f: any) => f.category === 'customer_art');
+            const pf = filesForImprint(r.id).filter((f: any) => f.category === 'production_files');
+            let pm = filesForImprint(r.id).filter((f: any) => f.category === 'proof_mockup');
+            let usedPreviewFallback = false;
+            if (pm.length === 0 && !!r.preview_url) {
+              pm = [{ id: `${r.id}-preview`, name: 'Preview', url: r.preview_url, type: 'image/jpeg', category: 'proof_mockup' }];
+              usedPreviewFallback = true;
+            }
+            const hasAnyUrl = [...ca, ...pf, ...pm].some((f: any) => typeof f.url === 'string' && f.url.length > 0);
+            if (!hasAnyUrl && !!r.preview_url) {
+              pm = [{ id: `${r.id}-preview`, name: 'Preview', url: r.preview_url, type: 'image/jpeg', category: 'proof_mockup' }];
+              usedPreviewFallback = true;
+            }
+            console.debug('[QuoteDetail] Built imprint files', { imprintId: r.id, ca: ca.length, pf: pf.length, pm: pm.length, usedPreviewFallback });
             imprints.push({
               id: r.id,
               method: r.method,
@@ -468,9 +519,9 @@ export default function QuoteDetail() {
               height: parseFloat(r.height) || 0,
               colorsOrThreads: r.colors_or_threads || 'N/A',
               notes: r.notes || '',
-              customerArt: files.filter((f: any) => f.category === 'customer_art'),
-              productionFiles: files.filter((f: any) => f.category === 'production_files'),
-              proofMockup: files.filter((f: any) => f.category === 'proof_mockup'),
+              customerArt: ca,
+              productionFiles: pf,
+              proofMockup: pm,
             });
           });
         } else if (item.imprint_type) {
@@ -541,9 +592,13 @@ export default function QuoteDetail() {
             className="bg-inkiq-primary hover:bg-inkiq-primary/90 gap-2"
             onClick={async () => {
               if (!id) return;
+              console.debug('[QuoteDetail] Create Invoice clicked', { quoteId: id });
               const result = await createFromQuote(id);
               if (result.success && result.invoice_id) {
                 navigate(`/invoices/${result.invoice_id}`);
+              } else {
+                console.error('[QuoteDetail] Create Invoice failed', result.error);
+                toast({ title: 'Failed to create invoice', description: result.error || 'Unknown error', variant: 'destructive' });
               }
             }}
           >

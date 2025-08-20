@@ -12,22 +12,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Plus, Copy, Trash2, Settings2 } from 'lucide-react';
+import { IMPRINT_METHODS } from '@/types/imprint';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase';
+import { track } from '@/lib/utils';
 
-const imprintMethods = [
-  { value: 'screen_printing', label: 'Screen Printing' },
-  { value: 'embroidery', label: 'Embroidery' },
-  { value: 'dtg', label: 'DTG' },
-  { value: 'dtf', label: 'DTF' },
-  { value: 'sublimation', label: 'Sublimation' },
-  { value: 'heat_transfer_vinyl', label: 'Heat Transfer Vinyl (CAD Cut)' },
-  { value: 'print_cut_htv', label: 'Print and Cut HTV' },
-  { value: 'screen_printed_transfers', label: 'Screen-Printed Transfers' },
-  { value: 'laser_engraving', label: 'Laser Engraving' },
-  { value: 'uv_digital_print', label: 'UV Digital Print' },
-  { value: 'pad_printing', label: 'Pad Printing' },
-  { value: 'foil_deboss_emboss', label: 'Foil/Deboss/Emboss' }
-];
+// Use the canonical list across the app: Screen Printing, Embroidery, DTF, DTG
+const imprintMethods = IMPRINT_METHODS;
 
 interface ImprintMethodConfig {
   id: string;
@@ -160,6 +151,28 @@ export function ImprintMethodsSettings() {
       title: "Imprint Method Added",
       description: `${methodInfo.label} has been added to your configuration.`
     });
+    track('prod_settings_updated', { entity_type: 'imprint_method', entity_id: newMethod.id, action: 'create' });
+  };
+
+  // Deactivate method with warning if unscheduled jobs exist; allow scheduled; block new selection via enabled flag
+  const handleToggleEnabled = async (id: string, enabled: boolean) => {
+    const cfg = configuredMethods.find(m => m.id === id);
+    if (!cfg) return;
+    if (!enabled) {
+      // turning off
+      const methodCode = cfg.method;
+      try {
+        const { data, error } = await supabase.rpc('get_production_jobs', { p_method: methodCode, p_stage: null });
+        if (!error) {
+          const hasUnscheduled = Array.isArray(data) && (data as any[]).some(j => (j.status || 'unscheduled') === 'unscheduled');
+          if (hasUnscheduled) {
+            toast({ title: 'Heads up', description: 'There are unscheduled jobs for this method. They will remain; new selections will be blocked while inactive.', variant: 'destructive' });
+          }
+        }
+      } catch {}
+    }
+    setConfiguredMethods(prev => prev.map(m => m.id === id ? { ...m, enabled } : m));
+    track('prod_settings_updated', { entity_type: 'imprint_method', entity_id: id, action: enabled ? 'enable' : 'disable' });
   };
 
   const selectedConfig = configuredMethods.find(m => m.id === selectedMethod);
@@ -367,7 +380,7 @@ function ScreenPrintingConfig({ config, onBack, onUpdate }: {
           <div className="ml-auto">
             <Switch
               checked={localConfig.enabled}
-              onCheckedChange={(enabled) => updateConfig({ enabled })}
+              onCheckedChange={(enabled) => handleToggleEnabled(localConfig.id, enabled)}
             />
             <Label className="ml-2">Active</Label>
           </div>

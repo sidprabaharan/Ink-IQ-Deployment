@@ -27,6 +27,11 @@ interface HourlyTimeSlotProps {
   onJobSchedule: (jobId: string, equipmentId: string, startTime: Date, endTime: Date) => void;
   onJobUnschedule: (jobId: string) => void;
   onStageAdvance: (jobId: string) => void;
+  terminalStageId?: string;
+  onJobStart?: (jobId: string) => void;
+  onJobMarkDone?: (jobId: string) => void;
+  onJobBlockToggle?: (jobId: string, block: boolean) => void;
+  onJobReopen?: (jobId: string) => void;
   onJobClick?: (job: ImprintJob) => void;
 }
 
@@ -39,6 +44,11 @@ export function HourlyTimeSlot({
   onJobSchedule,
   onJobUnschedule,
   onStageAdvance,
+  terminalStageId,
+  onJobStart,
+  onJobMarkDone,
+  onJobBlockToggle,
+  onJobReopen,
   onJobClick
 }: HourlyTimeSlotProps) {
   const [isDragOver, setIsDragOver] = useState(false);
@@ -209,7 +219,7 @@ export function HourlyTimeSlot({
           >
             <div 
               className="h-full transition-all"
-              draggable
+              draggable={job.status !== 'done' && job.status !== 'blocked' && job.status !== 'completed'}
               onDragStart={(e) => {
                 e.dataTransfer.setData("application/json", JSON.stringify({
                   ...job,
@@ -228,6 +238,21 @@ export function HourlyTimeSlot({
                 onUnschedule={() => onJobUnschedule(job.id)}
                 className="h-full min-h-[48px] text-xs"
               />
+              {/* Inline actions per rules: start, mark done, block/unblock, reopen */}
+              <div className="absolute -top-2 right-2 flex gap-1">
+                {onJobStart && job.status === 'scheduled' && (
+                  <button className="text-[10px] px-1 py-0.5 rounded border bg-background" onClick={(e) => { e.stopPropagation(); onJobStart(job.id); }}>Start</button>
+                )}
+                {onJobMarkDone && terminalStageId && job.currentStage === (terminalStageId as any) && job.status === 'in_progress' && (
+                  <button className="text-[10px] px-1 py-0.5 rounded border bg-background" onClick={(e) => { e.stopPropagation(); onJobMarkDone(job.id); }}>Mark Done</button>
+                )}
+                {onJobBlockToggle && job.status !== 'done' && job.status !== 'completed' && (
+                  <button className="text-[10px] px-1 py-0.5 rounded border bg-background" onClick={(e) => { e.stopPropagation(); onJobBlockToggle(job.id, job.status !== 'blocked'); }}>{job.status === 'blocked' ? 'Unblock' : 'Block'}</button>
+                )}
+                {onJobReopen && (job.status === 'done' || job.status === 'completed' || job.status === 'blocked') && (
+                  <button className="text-[10px] px-1 py-0.5 rounded border bg-background" onClick={(e) => { e.stopPropagation(); onJobReopen(job.id); }}>Reopen</button>
+                )}
+              </div>
             </div>
           </div>
         ))}

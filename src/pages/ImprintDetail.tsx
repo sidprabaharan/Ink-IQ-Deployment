@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Download, Eye, FileImage, Users, Calendar, Tag, Layers, MoreVertical, Package, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,67 +9,63 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { SharedImprint, ArtworkFile } from '@/types/artwork';
+import { ArtworkFile } from '@/types/artwork';
 import { IMPRINT_METHODS } from '@/types/imprint';
 import { useNavigate, useParams } from 'react-router-dom';
-import { mockSharedImprints } from '@/types/artwork';
+import { supabase } from '@/lib/supabase';
 
-// Mock orders data
-const mockOrders = [
-  {
-    id: "Q-3042",
-    orderNumber: "Q-3042",
-    customerName: "Acme Corporation",
-    status: "Production",
-    orderDate: new Date("2024-03-10"),
-    dueDate: new Date("2024-03-24"),
-    totalItems: 150,
-    value: 2247.50,
-    garmentTypes: ["Polo Shirts", "T-Shirts"]
-  },
-  {
-    id: "Q-3089", 
-    orderNumber: "Q-3089",
-    customerName: "Tech Solutions Ltd",
-    status: "Quote",
-    orderDate: new Date("2024-03-15"),
-    dueDate: new Date("2024-03-29"),
-    totalItems: 75,
-    value: 1123.75,
-    garmentTypes: ["Hoodies"]
-  },
-  {
-    id: "Q-3156",
-    orderNumber: "Q-3156", 
-    customerName: "Green Valley School",
-    status: "Completed",
-    orderDate: new Date("2024-02-20"),
-    dueDate: new Date("2024-03-05"),
-    totalItems: 200,
-    value: 1800.00,
-    garmentTypes: ["T-Shirts", "Caps"]
-  },
-  {
-    id: "Q-3201",
-    orderNumber: "Q-3201",
-    customerName: "Mountain Adventures",
-    status: "Shipped", 
-    orderDate: new Date("2024-03-08"),
-    dueDate: new Date("2024-03-22"),
-    totalItems: 100,
-    value: 1650.00,
-    garmentTypes: ["Jackets", "Beanies"]
-  }
-];
+interface PreviousItem { id: string; quote_id: string; product_name?: string; item_number?: string; quantity?: number; created_at?: string; }
 
 export default function ImprintDetail() {
   const navigate = useNavigate();
   const { imprintId } = useParams();
   const [selectedFile, setSelectedFile] = useState<ArtworkFile | null>(null);
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [imprint, setImprint] = useState<any | null>(null);
+  const [previousItems, setPreviousItems] = useState<PreviousItem[]>([]);
 
-  // Find the specific imprint
-  const imprint = mockSharedImprints.find(imp => imp.id === imprintId);
+  useEffect(() => {
+    const load = async () => {
+      if (!imprintId) { setLoading(false); return; }
+      try {
+        const { data: detail } = await supabase.rpc('get_library_imprint_detail', { p_imprint_id: imprintId });
+        if (detail) {
+          const d: any = detail as any;
+          const files = (d.files || []) as Array<{ id: string; category: string; file_path: string; file_name?: string; file_type?: string; }>
+          const sign = async (path: string) => (await supabase.storage.from('artwork').createSignedUrl(path, 3600)).data?.signedUrl || '';
+          const toArtworkFile = async (f: any): Promise<ArtworkFile> => ({ id: f.id, name: f.file_name || f.file_path.split('/').pop() || 'file', url: await sign(f.file_path), type: f.file_type || 'application/octet-stream', sizeBytes: 0, uploadedAt: new Date() } as any);
+          const customerArt = await Promise.all(files.filter(f => f.category === 'customer_art').map(toArtworkFile));
+          const productionFiles = await Promise.all(files.filter(f => f.category === 'production_files').map(toArtworkFile));
+          const proofMockup = await Promise.all(files.filter(f => f.category === 'proof_mockup').map(toArtworkFile));
+          const previewUrl = d.imprint?.preview_path ? (await supabase.storage.from('artwork').createSignedUrl(d.imprint.preview_path, 3600)).data?.signedUrl : undefined;
+          setImprint({
+            id: d.imprint?.id || imprintId,
+            designName: d.imprint?.design_name || 'Design',
+            method: d.imprint?.method || 'screenPrinting',
+            size: { width: 0, height: 0 },
+            createdAt: d.imprint?.created_at ? new Date(d.imprint.created_at) : new Date(),
+            updatedAt: d.imprint?.updated_at ? new Date(d.imprint.updated_at) : new Date(),
+            associatedCustomers: (d.imprint?.customers || []).map((c: any) => ({ customerId: c.id, customerName: c.name, usageCount: 0, lastUsedAt: new Date() })),
+            usageCount: 0,
+            productionFiles,
+            mockups: proofMockup,
+            customerArt,
+            previewUrl,
+          });
+        }
+        const { data: itemsData } = await supabase.rpc('get_items_for_library_imprint', { p_library_imprint_id: imprintId });
+        setPreviousItems(((itemsData as any[]) || []).map((i: any) => ({ id: i.id, quote_id: i.quote_id, product_name: i.product_name, item_number: i.item_number, quantity: i.quantity, created_at: i.created_at })));
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [imprintId]);
+
+  if (loading) {
+    return <div className="flex-1 space-y-6 p-6 md:p-8">Loading...</div>;
+  }
 
   if (!imprint) {
     return (
@@ -77,9 +73,7 @@ export default function ImprintDetail() {
         <div className="text-center py-12">
           <h2 className="text-2xl font-bold">Imprint not found</h2>
           <p className="text-muted-foreground mt-2">The requested imprint could not be found.</p>
-          <Button onClick={() => navigate('/artwork-files')} className="mt-4">
-            Back to Artwork Files
-          </Button>
+          <Button onClick={() => navigate('/artwork-files')} className="mt-4">Back to Artwork Files</Button>
         </div>
       </div>
     );
@@ -157,12 +151,10 @@ export default function ImprintDetail() {
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
               <div className="w-20 h-20 bg-muted rounded-lg flex items-center justify-center overflow-hidden">
-                {imprint.customerArt.length > 0 ? (
-                  <img 
-                    src={imprint.customerArt[0].url} 
-                    alt={imprint.designName}
-                    className="w-full h-full object-contain"
-                  />
+                {imprint.previewUrl ? (
+                  <img src={imprint.previewUrl} alt={imprint.designName} className="w-full h-full object-contain" />
+                ) : imprint.customerArt.length > 0 ? (
+                  <img src={imprint.customerArt[0].url} alt={imprint.designName} className="w-full h-full object-contain" />
                 ) : (
                   <FileImage className="h-8 w-8 text-muted-foreground" />
                 )}
@@ -187,7 +179,7 @@ export default function ImprintDetail() {
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center">
-              <div className="text-2xl font-bold">{imprint.usageCount}</div>
+              <div className="text-2xl font-bold">{previousItems.length}</div>
               <div className="text-sm text-muted-foreground">Times Used</div>
             </div>
             <div className="text-center">
@@ -243,35 +235,32 @@ export default function ImprintDetail() {
         </CardContent>
       </Card>
 
-      {/* Associated Orders */}
+      {/* Previous Items */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Package className="h-5 w-5" />
-            Associated Orders ({mockOrders.length})
+            Previous Items ({previousItems.length})
           </CardTitle>
           <CardDescription>
-            Orders that include this imprint
+            Items that used this design
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 md:grid-cols-2">
-            {mockOrders.map((order) => (
-              <div key={order.id} className="flex items-center justify-between p-3 border rounded-lg">
+            {previousItems.map((it) => (
+              <div key={it.id} className="flex items-center justify-between p-3 border rounded-lg">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
                     <Package className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <div className="font-medium">{order.orderNumber}</div>
-                    <div className="text-sm text-muted-foreground">{order.customerName}</div>
+                    <div className="font-medium">{it.item_number || it.id}</div>
+                    <div className="text-sm text-muted-foreground">{it.product_name || ''}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="text-sm text-muted-foreground text-right">
-                    {formatDate(order.orderDate)}
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={() => navigate(`/quotes/${order.id.split('-')[1]}/edit`)}>
+                  <Button variant="ghost" size="sm" onClick={() => navigate(`/quotes/${it.quote_id}`)}>
                     <ExternalLink className="h-4 w-4" />
                   </Button>
                 </div>

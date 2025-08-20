@@ -15,6 +15,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from "@/components/ui/dropdown-menu";
+import { supabase } from "@/lib/supabase";
 import {
   Table,
   TableBody,
@@ -31,6 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import LibrarySelectorDialog from '@/components/artwork/LibrarySelectorDialog';
 
 interface ItemMockup {
   id: string;
@@ -48,6 +51,7 @@ interface ItemImprint {
   colorsOrThreads: string;
   notes: string;
   itemId: string; // client-side item id this imprint belongs to
+  libraryImprintId?: string;
   customerArt: File[];
   productionFiles: File[];
   proofMockup: File[];
@@ -59,6 +63,8 @@ interface QuoteItem {
   itemNumber: string;
   color: string;
   description: string;
+  imprintMethod?: string;
+  decorationCode?: string;
   sizes: {
     xs: number;
     s: number;
@@ -142,6 +148,7 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
     const [selectedGroupId, setSelectedGroupId] = useState<string>('');
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
     const [proofMockupFile, setProofMockupFile] = useState<File | null>(null);
+    const [libraryOpen, setLibraryOpen] = useState(false);
     const [imprintData, setImprintData] = useState<Partial<ItemImprint>>({
       method: '',
       location: '',
@@ -153,6 +160,45 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
 
     // Debug logging in useEffect to prevent infinite re-renders
 
+    // Production config for method/decoration selection
+    const [prodConfig, setProdConfig] = useState<Record<string, { label: string; decorations: { code: string; label: string }[] }>>({});
+    useEffect(() => {
+      const loadConfig = async () => {
+        try {
+          const { data, error } = await supabase.rpc('get_production_config');
+          if (!error && Array.isArray(data)) {
+            const mapped: Record<string, { label: string; decorations: { code: string; label: string }[] }> = {} as any;
+            (data as any[]).forEach((m: any) => {
+              mapped[m.method_code] = {
+                label: m.display_name,
+                decorations: (m.decorations || []).map((d: any) => ({ code: d.decoration_code || 'standard', label: d.display_name })),
+              };
+            });
+            setProdConfig(mapped);
+          }
+        } catch {}
+      };
+      loadConfig();
+    }, []);
+    // Helper to resolve a displayable URL from various shapes (library-signed URLs or File objects)
+    const resolveFileUrl = (file: any): string | null => {
+      if (!file) return null;
+      if (typeof file === 'string') return file;
+      const candidates = [file?.url, file?.signedUrl, file?.publicUrl, file?.signed_url, file?.public_url];
+      const found = candidates.find((u) => typeof u === 'string' && u.length > 0);
+      if (found) return found as string;
+      try {
+        if (file instanceof File || file instanceof Blob) {
+          return URL.createObjectURL(file);
+        }
+      } catch {}
+      return null;
+    };
+
+    const resolveFileName = (file: any, fallback: string): string => {
+      if (!file) return fallback;
+      return (file?.name || file?.file_name || fallback) as string;
+    };
     
     // Save to localStorage whenever itemGroups change
     useEffect(() => {
@@ -336,6 +382,78 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
         productionFiles: uploadedFiles.filter(f => !f.type.startsWith('image/')),
         proofMockup: proofMockupFile ? [proofMockupFile] : []
       };
+      console.debug('[QuoteItemsSection] handleImprintSave newImprint', {
+        groupId: selectedGroupId,
+        itemId: selectedItemId,
+        method: newImprint.method,
+        location: newImprint.location,
+        ca: newImprint.customerArt.length,
+        pf: newImprint.productionFiles.length,
+        pm: newImprint.proofMockup.length,
+      });
+
+      // If an imprint from Library was already added for the same item/method/location
+      // and there are no newly uploaded files, avoid overwriting it with an empty one.
+      const hasNewFiles = uploadedFiles.length > 0 || !!proofMockupFile;
+      let didMergeExisting = false;
+
+      setItemGroups(prev => prev.map(group => {
+        if (group.id !== selectedGroupId) return group;
+        const existingIndexExact = group.imprints.findIndex(imp => imp.itemId === selectedItemId && imp.method === newImprint.method && imp.location === newImprint.location);
+        let existingIndex = existingIndexExact;
+        if (existingIndex < 0) {
+          // fallback: match by method only (merge dialog changes into library-imprint with empty location)
+          existingIndex = group.imprints.findIndex(imp => imp.itemId === selectedItemId && imp.method === newImprint.method);
+          if (existingIndex >= 0) {
+            console.debug('[QuoteItemsSection] handleImprintSave merging by method-only (location changed)', { prevLocation: (group.imprints[existingIndex] as any)?.location, newLocation: newImprint.location });
+          }
+        }
+        if (existingIndex >= 0) {
+          const existing = group.imprints[existingIndex] as any;
+          const hasFieldChanges = (
+            (newImprint.location && newImprint.location !== existing.location) ||
+            (newImprint.width && newImprint.width !== existing.width) ||
+            (newImprint.height && newImprint.height !== existing.height) ||
+            (newImprint.notes && newImprint.notes !== existing.notes) ||
+            (newImprint.colorsOrThreads && newImprint.colorsOrThreads !== existing.colorsOrThreads)
+          );
+          if (!hasNewFiles && !hasFieldChanges && !(existing as any).libraryImprintId) {
+            // Nothing meaningful to merge
+            didMergeExisting = true;
+            console.debug('[QuoteItemsSection] handleImprintSave skip overwrite existing library imprint');
+            return group;
+          }
+          // Merge with existing: append new files, update editable fields
+          const merged = {
+            ...existing,
+            width: newImprint.width || existing.width,
+            height: newImprint.height || existing.height,
+            // If user set a location, prefer it
+            location: newImprint.location || existing.location,
+            colorsOrThreads: newImprint.colorsOrThreads || existing.colorsOrThreads,
+            notes: newImprint.notes || existing.notes,
+            customerArt: [...(existing.customerArt || []), ...newImprint.customerArt],
+            productionFiles: [...(existing.productionFiles || []), ...newImprint.productionFiles],
+            proofMockup: [...(existing.proofMockup || []), ...newImprint.proofMockup],
+          } as ItemImprint;
+          console.debug('[QuoteItemsSection] handleImprintSave merged imprint', {
+            id: existing.id,
+            ca: merged.customerArt.length,
+            pf: merged.productionFiles.length,
+            pm: merged.proofMockup.length,
+          });
+          const updatedImprints = [...group.imprints];
+          updatedImprints[existingIndex] = merged;
+          didMergeExisting = true;
+          return { ...group, imprints: updatedImprints };
+        }
+        return group;
+      }));
+
+      if (didMergeExisting) {
+        handleImprintDialogClose();
+        return;
+      }
 
       // Enforce per-item imprint uniqueness within group (method+location per item)
       setItemGroups(prev => prev.map(group => {
@@ -585,6 +703,39 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                       />
                     </TableCell>
 
+                    {/* Method / Decoration (inline selectors, compact; no layout change beyond cell content) */}
+                    <TableCell colSpan={1}>
+                      <div className="flex items-center gap-2">
+                        <Select
+                          value={item.imprintMethod || ''}
+                          onValueChange={(value) => updateItem(group.id, item.id, { imprintMethod: value, decorationCode: '' })}
+                        >
+                          <SelectTrigger className="w-40 border-0 shadow-none">
+                            <SelectValue placeholder="Method" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(prodConfig).map(([code, m]) => (
+                              <SelectItem key={code} value={code}>{m.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={item.decorationCode || ''}
+                          onValueChange={(value) => updateItem(group.id, item.id, { decorationCode: value })}
+                          disabled={!item.imprintMethod}
+                        >
+                          <SelectTrigger className="w-44 border-0 shadow-none">
+                            <SelectValue placeholder="Decoration" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(item.imprintMethod && prodConfig[item.imprintMethod]?.decorations || []).map((d) => (
+                              <SelectItem key={d.code} value={d.code}>{d.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </TableCell>
+
                     {/* Size Quantities */}
                     <TableCell>
                       <Input 
@@ -716,7 +867,16 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                   <div className="space-y-3">
                     <h4 className="font-medium text-sm">Imprint Details</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {group.imprints.map((imprint) => (
+                       {group.imprints.filter((imp) => {
+                         const hasText = (imp?.method && String(imp.method).trim() !== '') || (imp?.location && String(imp.location).trim() !== '');
+                         const fileCount = (imp?.customerArt?.length || 0) + (imp?.productionFiles?.length || 0) + (imp?.proofMockup?.length || 0);
+                         const hasNotes = !!(imp?.notes && String(imp.notes).trim() !== '');
+                         const keep = hasText || fileCount > 0 || hasNotes;
+                         if (!keep) {
+                           console.debug('[QuoteItemsSection] filter blank imprint in table', { id: imp?.id, method: imp?.method, location: imp?.location, fileCount, hasNotes });
+                         }
+                         return keep;
+                       }).map((imprint) => (
                         <div key={imprint.id} className="border rounded-md p-3 bg-white">
                           <div className="grid grid-cols-2 gap-3 text-sm">
                             <div>
@@ -744,11 +904,19 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                             <div className="mt-2">
                               <span className="font-medium text-sm">Customer Art:</span>
                               <div className="flex flex-wrap gap-2 mt-1">
-                                      {imprint.customerArt.map((file, idx) => (
+                                      {imprint.customerArt.map((file: any, idx: number) => {
+                                        const src = resolveFileUrl(file);
+                                        const alt = resolveFileName(file, `img-${idx}`);
+                                        return (
                                         <div key={`ca-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden">
-                                          <img src={URL.createObjectURL(file)} alt={file.name} className="w-full h-full object-cover" />
+                                            {src ? (
+                                              <img src={src} alt={alt} className="w-full h-full object-cover" onError={() => console.warn('[QuoteItemsSection] customerArt image error', { src, alt })} />
+                                            ) : (
+                                              <span className="text-xs">{(alt || 'FILE').split('.').pop()?.toUpperCase()}</span>
+                                            )}
                                   </div>
-                                ))}
+                                        );
+                                      })}
                               </div>
                             </div>
                           )}
@@ -757,11 +925,24 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                             <div className="mt-2">
                               <span className="font-medium text-sm">Production Files:</span>
                               <div className="flex flex-wrap gap-2 mt-1">
-                                      {imprint.productionFiles.map((file, idx) => (
+                                      {imprint.productionFiles.map((file: any, idx: number) => {
+                                        const src = resolveFileUrl(file);
+                                        const name = resolveFileName(file, `prod-${idx}`);
+                                        const isImage = !!src && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name);
+                                        if (isImage) {
+                                          const alt = name || `prod-${idx}`;
+                                          return (
+                                            <div key={`pf-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden">
+                                              <img src={src!} alt={alt} className="w-full h-full object-cover" onError={() => console.warn('[QuoteItemsSection] productionFiles image error', { src, alt })} />
+                                            </div>
+                                          );
+                                        }
+                                        return (
                                         <div key={`pf-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden flex items-center justify-center">
-                                          <span className="text-xs">{file.name.split('.').pop()?.toUpperCase()}</span>
+                                            <span className="text-xs">{(name || 'FILE').split('.').pop()?.toUpperCase()}</span>
                                   </div>
-                                ))}
+                                        );
+                                      })}
                               </div>
                             </div>
                           )}
@@ -770,11 +951,19 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                             <div className="mt-2">
                               <span className="font-medium text-sm">Proof/Mockup:</span>
                               <div className="flex flex-wrap gap-2 mt-1">
-                                      {imprint.proofMockup.map((file, idx) => (
+                                      {imprint.proofMockup.map((file: any, idx: number) => {
+                                        const src = resolveFileUrl(file);
+                                        const alt = resolveFileName(file, `mock-${idx}`);
+                                        return (
                                         <div key={`pm-${imprint.id}-${idx}`} className="w-16 h-16 border rounded-md overflow-hidden">
-                                          <img src={URL.createObjectURL(file)} alt={file.name} className="w-full h-full object-cover" />
+                                            {src ? (
+                                              <img src={src} alt={alt} className="w-full h-full object-cover" onError={() => console.warn('[QuoteItemsSection] proofMockup image error', { src, alt })} />
+                                            ) : (
+                                              <span className="text-xs">{(alt || 'FILE').split('.').pop()?.toUpperCase()}</span>
+                                            )}
                                   </div>
-                                ))}
+                                        );
+                                      })}
                               </div>
                             </div>
                           )}
@@ -791,7 +980,7 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
         </Table>
         </div>
         {/* Removed global imprint list to prevent duplicate rendering. Imprints now render inline per group above. */}
-
+        
         {/* Action Buttons under table: left (Line Item, Imprint), right (Line Item Group) */}
         <div className="flex items-center justify-between">
           <div className="flex gap-2">
@@ -845,7 +1034,7 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
             Imprint
               </DialogTitle>
               <div className="flex items-center gap-2 ml-auto">
-                <Button variant="outline" size="sm" className="gap-2">
+                <Button variant="outline" size="sm" className="gap-2" onClick={() => setLibraryOpen(true)}>
                   <Image className="h-4 w-4" />
                   Select from Library
                 </Button>
@@ -905,7 +1094,7 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                 </div>
               </div>
             </div>
-
+            
             <div className="space-y-6">
               {/* Imprint Details Section */}
               <div className="space-y-4">
@@ -930,11 +1119,10 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                         <SelectValue placeholder="Select Imprint Method" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="screen_print">Screen Printing</SelectItem>
                         <SelectItem value="embroidery">Embroidery</SelectItem>
-                        <SelectItem value="screen-print">Screen Print</SelectItem>
-                        <SelectItem value="heat-transfer">Heat Transfer</SelectItem>
-                        <SelectItem value="vinyl">Vinyl</SelectItem>
-                        <SelectItem value="direct-to-garment">Direct to Garment</SelectItem>
+                        <SelectItem value="dtf">DTF</SelectItem>
+                        <SelectItem value="dtg">DTG</SelectItem>
                       </SelectContent>
                     </Select>
                             </div>
@@ -1133,6 +1321,70 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <LibrarySelectorDialog
+          open={libraryOpen}
+          onOpenChange={setLibraryOpen}
+          methodFilter={imprintData.method || null}
+          customerIdFilter={undefined}
+          onSelect={({ imprint, mockup, files }) => {
+            setImprintData((prev) => ({
+              ...prev,
+              method: imprint.method,
+              location: (mockup?.location ?? prev.location ?? ''),
+              width: (mockup?.width ?? prev.width ?? 0),
+              height: (mockup?.height ?? prev.height ?? 0),
+              colorsOrThreads: (mockup?.colors_or_threads ?? prev.colorsOrThreads ?? ''),
+            }));
+            const targetGroupId = selectedGroupId || itemGroups[0]?.id || '';
+            const targetItemId = selectedItemId || getFirstItemId(targetGroupId);
+            if (!targetGroupId || !targetItemId) return;
+            const newImprint: ItemImprint = {
+              id: `imprint-${Date.now()}`,
+              method: imprint.method,
+              location: (mockup?.location ?? ''),
+              width: (mockup?.width ?? 0),
+              height: (mockup?.height ?? 0),
+              colorsOrThreads: (mockup?.colors_or_threads ?? ''),
+              notes: '',
+              itemId: targetItemId,
+              libraryImprintId: imprint.id,
+              customerArt: (files.customerArt || []) as any,
+              productionFiles: (files.productionFiles || []) as any,
+              proofMockup: (files.proofMockup || []) as any,
+            } as any;
+            console.debug('[QuoteItemsSection] Library onSelect attach', {
+              targetGroupId,
+              targetItemId,
+              libraryImprintId: imprint.id,
+              method: newImprint.method,
+              location: newImprint.location,
+              ca: newImprint.customerArt.length,
+              pf: newImprint.productionFiles.length,
+              pm: newImprint.proofMockup.length,
+            });
+            // If a library imprint exists for this item+method (empty location), update its core fields to ensure details are visible
+            setItemGroups(prev => prev.map(group => {
+              if (group.id !== targetGroupId) return group;
+              const idx = group.imprints.findIndex(imp => imp.itemId === newImprint.itemId && imp.method === newImprint.method);
+              if (idx >= 0) {
+                const updated = [...group.imprints];
+                updated[idx] = {
+                  ...updated[idx],
+                  location: newImprint.location || updated[idx].location,
+                  width: newImprint.width || updated[idx].width,
+                  height: newImprint.height || updated[idx].height,
+                  colorsOrThreads: newImprint.colorsOrThreads || (updated[idx] as any).colorsOrThreads,
+                  customerArt: newImprint.customerArt,
+                  productionFiles: newImprint.productionFiles,
+                  proofMockup: newImprint.proofMockup,
+                } as any;
+                return { ...group, imprints: updated };
+              }
+              return { ...group, imprints: [...group.imprints, newImprint] };
+            }));
+            setLibraryOpen(false);
+          }}
+        />
     </div>
   );
   }

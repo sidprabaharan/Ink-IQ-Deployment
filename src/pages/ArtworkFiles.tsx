@@ -9,8 +9,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { mockArtworkLibrary, mockSharedImprints, ArtworkFile } from '@/types/artwork';
 import { IMPRINT_METHODS } from '@/types/imprint';
+import { supabase } from '@/lib/supabase';
+import AddToLibraryDialog from '@/components/artwork/AddToLibraryDialog';
 import { useNavigate } from 'react-router-dom';
 
 // Unified imprint type that combines MasterArtwork and SharedImprint
@@ -27,6 +28,7 @@ interface UnifiedImprint {
   createdAt: Date;
   updatedAt: Date;
   notes?: string;
+  previewUrl?: string;
 }
 
 export default function ArtworkFiles() {
@@ -39,57 +41,52 @@ export default function ArtworkFiles() {
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [folderViewOpen, setFolderViewOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [unifiedImprints, setUnifiedImprints] = useState<UnifiedImprint[]>([]);
 
-  // Create unified imprints list from both sources
-  const unifiedImprints = useMemo(() => {
-    const imprints: UnifiedImprint[] = [];
-    
-    // Add imprints from customer artwork libraries
-    mockArtworkLibrary.forEach(library => {
-      library.folders.forEach(folder => {
-        folder.artworks.forEach(artwork => {
-          imprints.push({
-            id: artwork.id,
-            designName: artwork.designName,
-            imprintMethod: artwork.method,
-            associatedCustomers: [{ id: library.customerId, name: library.customerName }],
-            customerArt: artwork.customerArt,
-            productionFiles: artwork.productionFiles,
-            mockups: artwork.mockups,
-            fileCount: artwork.fileCount,
-            totalSizeBytes: artwork.totalSizeBytes,
-            createdAt: artwork.createdAt,
-            updatedAt: artwork.updatedAt,
-            notes: "Sample notes for this imprint design"
-          });
-        });
-      });
-    });
+  const fetchImprints = async () => {
+    const { data, error } = await supabase.rpc('get_library_imprints', { p_method: null, p_search: null });
+    if (error) {
+      console.error('[ArtworkFiles] get_library_imprints error', error);
+      return;
+    }
+    const arr = (data as any[]) || [];
+    console.log('[ArtworkFiles] fetched imprints count=', arr.length);
+    const mapped = await Promise.all(arr.map(async (row: any) => {
+      let previewUrl: string | undefined;
+      if (row.preview_path) {
+        try {
+          console.log('[ArtworkFiles] preview_path found', row.preview_path);
+          const { data: signed, error: signErr } = await supabase.storage.from('artwork').createSignedUrl(row.preview_path, 3600);
+          if (signErr) {
+            console.warn('[ArtworkFiles] createSignedUrl error', signErr);
+          }
+          previewUrl = signed?.signedUrl;
+          console.log('[ArtworkFiles] preview signedUrl', previewUrl);
+        } catch (e) {
+          console.warn('[ArtworkFiles] failed to sign preview', row.preview_path, e);
+        }
+      } else {
+        console.log('[ArtworkFiles] no preview_path for imprint', row.id);
+      }
+      return {
+        id: row.id,
+        designName: row.design_name,
+        imprintMethod: row.method,
+        associatedCustomers: (row.customers || []).map((c: any) => ({ id: c.id, name: c.name })),
+        customerArt: [], productionFiles: [], mockups: [],
+        fileCount: row.file_count || 0,
+        totalSizeBytes: row.total_size || 0,
+        createdAt: new Date(row.created_at),
+        updatedAt: new Date(row.updated_at),
+        notes: row.notes || '',
+        previewUrl,
+      } as UnifiedImprint;
+    }));
+    setUnifiedImprints(mapped);
+  };
 
-    // Add shared imprints
-    mockSharedImprints.forEach(sharedImprint => {
-      imprints.push({
-        id: sharedImprint.id,
-        designName: sharedImprint.designName,
-        imprintMethod: sharedImprint.method,
-        associatedCustomers: sharedImprint.associatedCustomers.map(usage => ({
-          id: usage.customerId,
-          name: usage.customerName
-        })),
-        customerArt: sharedImprint.customerArt,
-        productionFiles: sharedImprint.productionFiles,
-        mockups: sharedImprint.mockups,
-        fileCount: sharedImprint.customerArt.length + sharedImprint.productionFiles.length + sharedImprint.mockups.length,
-        totalSizeBytes: [...sharedImprint.customerArt, ...sharedImprint.productionFiles, ...sharedImprint.mockups]
-          .reduce((sum, file) => sum + file.sizeBytes, 0),
-        createdAt: sharedImprint.createdAt,
-        updatedAt: sharedImprint.updatedAt,
-        notes: "Shared imprint design notes"
-      });
-    });
-
-    return imprints;
-  }, []);
+  React.useEffect(() => { fetchImprints(); }, []);
 
   // Get unique customers for filter (from unified imprints)
   const customers = useMemo(() => {
@@ -197,7 +194,7 @@ export default function ArtworkFiles() {
             Manage all imprints, artwork files, and associated customers
           </p>
         </div>
-        <Button className="gap-2">
+        <Button className="gap-2" onClick={()=>setAddOpen(true)}>
           <Upload className="h-4 w-4" />
           Upload Artwork
         </Button>
@@ -437,19 +434,20 @@ export default function ArtworkFiles() {
                 <CardContent className="space-y-3">
                   {/* Image Preview */}
                   <div className="aspect-square bg-muted rounded-lg flex items-center justify-center overflow-hidden">
-                    {imprint.customerArt.length > 0 ? (
+                    {imprint.previewUrl ? (
                       <img 
-                        src={imprint.customerArt[0].url} 
+                        src={imprint.previewUrl}
                         alt={imprint.designName}
                         className="w-full h-full object-contain"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
                           target.style.display = 'none';
                           target.nextElementSibling?.classList.remove('hidden');
+                          console.warn('[ArtworkFiles] preview image failed to render', imprint.id);
                         }}
                       />
                     ) : null}
-                    <div className={`flex flex-col items-center text-muted-foreground ${imprint.customerArt.length > 0 ? 'hidden' : ''}`}>
+                    <div className={`flex flex-col items-center text-muted-foreground ${imprint.previewUrl ? 'hidden' : ''}`}>
                       <FileImage className="h-8 w-8 mb-2" />
                       <span className="text-xs">No Preview</span>
                     </div>
@@ -499,19 +497,20 @@ export default function ArtworkFiles() {
                        onClick={() => navigate(`/imprint/${imprint.id}`)}>
                     {/* Image Preview */}
                     <div className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
-                      {imprint.customerArt.length > 0 ? (
+                      {imprint.previewUrl ? (
                         <img 
-                          src={imprint.customerArt[0].url} 
+                          src={imprint.previewUrl}
                           alt={imprint.designName}
                           className="w-full h-full object-contain"
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
                             target.style.display = 'none';
                             target.nextElementSibling?.classList.remove('hidden');
+                            console.warn('[ArtworkFiles] preview image failed to render (list)', imprint.id);
                           }}
                         />
                       ) : null}
-                      <div className={`flex flex-col items-center text-muted-foreground text-xs ${imprint.customerArt.length > 0 ? 'hidden' : ''}`}>
+                      <div className={`flex flex-col items-center text-muted-foreground text-xs ${imprint.previewUrl ? 'hidden' : ''}`}>
                         <FileImage className="h-6 w-6" />
                       </div>
                     </div>
@@ -668,6 +667,7 @@ export default function ArtworkFiles() {
           )}
         </DialogContent>
       </Dialog>
+      <AddToLibraryDialog open={addOpen} onOpenChange={(v)=>{ setAddOpen(v); if(!v) fetchImprints(); }} onCreated={fetchImprints} />
     </div>
   );
 }

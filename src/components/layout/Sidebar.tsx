@@ -24,6 +24,7 @@ import {
   Network,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+import { useOrganization } from '@/context/OrganizationContext';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -32,6 +33,9 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, toggleCollapse }: SidebarProps) {
   const location = useLocation();
+  const { organization } = useOrganization();
+  const role = (organization?.user_role || '').toLowerCase();
+  const isManager = ['production_manager', 'manager', 'admin', 'owner'].includes(role);
   
   const navigationItems = [
     {
@@ -102,16 +106,8 @@ export function Sidebar({ collapsed, toggleCollapse }: SidebarProps) {
   ];
 
   const bottomItems = [
-    {
-      name: 'Settings',
-      icon: Settings,
-      path: '/settings',
-    },
-    {
-      name: 'Logout',
-      icon: LogOut,
-      path: '/logout',
-    },
+    { name: 'Settings', icon: Settings, path: '/settings' } as const,
+    { name: 'Logout', icon: LogOut, path: '/logout' } as const,
   ];
 
   return (

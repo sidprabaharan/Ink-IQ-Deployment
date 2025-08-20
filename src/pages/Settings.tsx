@@ -27,10 +27,15 @@ import { SupplierIntegrations } from '@/components/settings/SupplierIntegrations
 import { OutsourcingPreferences } from '@/components/settings/OutsourcingPreferences';
 import { ProductionSettings } from '@/components/settings/ProductionSettings';
 import { ImprintMethodsSettings } from '@/components/settings/ImprintMethodsSettings';
+import { useOrganization } from '@/context/OrganizationContext';
+ 
 
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState('users');
+  const { organization } = useOrganization();
+  const role = (organization?.user_role || '').toLowerCase();
+  const isManager = ['production_manager', 'manager', 'admin', 'owner'].includes(role);
   
   const settingsSections = [
     { id: 'users', name: 'User Management', icon: Users, component: UserManagement },
@@ -51,6 +56,8 @@ export default function Settings() {
     { id: 'billing', name: 'Billing & Subscription', icon: BillingIcon, component: Billing },
     { id: 'general', name: 'General Settings', icon: SettingsIcon, component: GeneralSettings },
   ];
+
+  
 
   return (
     <div className="flex-1 p-6 md:p-8 space-y-6">

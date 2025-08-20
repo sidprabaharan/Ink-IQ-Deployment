@@ -22,6 +22,11 @@ interface StationGridProps {
   onJobSchedule: (jobId: string, equipmentId: string, startTime: Date, endTime: Date) => void;
   onJobUnschedule: (jobId: string) => void;
   onStageAdvance: (jobId: string) => void;
+  terminalStageId?: string;
+  onJobStart?: (jobId: string) => void;
+  onJobMarkDone?: (jobId: string) => void;
+  onJobBlockToggle?: (jobId: string, block: boolean) => void;
+  onJobReopen?: (jobId: string) => void;
   onJobClick?: (job: ImprintJob) => void;
 }
 
@@ -33,6 +38,11 @@ export function StationGrid({
   onJobSchedule,
   onJobUnschedule,
   onStageAdvance,
+  terminalStageId,
+  onJobStart,
+  onJobMarkDone,
+  onJobBlockToggle,
+  onJobReopen,
   onJobClick
 }: StationGridProps) {
   const [isOpen, setIsOpen] = useState(true);
@@ -105,6 +115,11 @@ export function StationGrid({
                 onJobSchedule={onJobSchedule}
                 onJobUnschedule={onJobUnschedule}
                 onStageAdvance={onStageAdvance}
+                terminalStageId={terminalStageId}
+                onJobStart={onJobStart}
+                onJobMarkDone={onJobMarkDone}
+                onJobBlockToggle={onJobBlockToggle}
+                onJobReopen={onJobReopen}
                 onJobClick={onJobClick}
               />
             );

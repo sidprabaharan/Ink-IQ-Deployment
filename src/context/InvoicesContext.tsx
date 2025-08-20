@@ -53,16 +53,23 @@ export const InvoicesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const createFromQuote = async (quoteId: string, invoiceDate?: Date, dueDate?: Date) => {
     try {
+      console.debug('[InvoicesContext] Creating invoice from quote', { quoteId, invoiceDate, dueDate });
       const { data, error } = await supabase.rpc('create_invoice_from_quote', {
         p_quote_id: quoteId,
         p_invoice_date: invoiceDate || null,
         p_due_date: dueDate || null,
       });
-      if (error) throw error;
-      const newId = data?.[0]?.invoice_id || data?.invoice_id || null;
+      if (error) {
+        // Surface detailed error for debugging
+        console.error('[InvoicesContext] create_invoice_from_quote failed', error);
+        throw error;
+      }
+      const newId = data?.[0]?.invoice_id || (data as any)?.invoice_id || null;
+      console.debug('[InvoicesContext] create_invoice_from_quote returned', { data, newId });
       if (newId) await getInvoices();
       return newId ? { success: true, invoice_id: newId } : { success: false, error: 'No invoice id returned' };
     } catch (e: any) {
+      console.error('[InvoicesContext] createFromQuote error', e);
       return { success: false, error: e?.message || 'Failed to create invoice' };
     }
   };
@@ -104,6 +111,9 @@ export const InvoicesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     </InvoicesContext.Provider>
   );
 };
+
+
+
 
 
 

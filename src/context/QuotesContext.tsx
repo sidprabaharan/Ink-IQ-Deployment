@@ -146,7 +146,73 @@ export const QuotesProvider: React.FC<QuotesProviderProps> = ({ children }) => {
         const quotesData = data[0].quotes;
         // Handle both array and null cases
         if (quotesData && Array.isArray(quotesData)) {
-          setQuotes(quotesData);
+          // Debug: log date fields coming from backend
+          try {
+            console.debug('[QuotesContext] getQuotes received', {
+              count: quotesData.length,
+              sample: quotesData.slice(0, 5).map((q: any) => ({
+                id: q.id,
+                quote_number: q.quote_number,
+                status: q.status,
+                customer_due_date: q.customer_due_date,
+                production_due_date: q.production_due_date,
+                payment_due_date: q.payment_due_date,
+                valid_until: q.valid_until,
+                created_at: q.created_at,
+              }))
+            });
+          } catch {}
+          // If RPC payload is missing due date fields, fall back to direct select
+          const missingDueFields = quotesData.every((q: any) => (
+            typeof q.customer_due_date === 'undefined' &&
+            typeof q.production_due_date === 'undefined' &&
+            typeof q.payment_due_date === 'undefined' &&
+            typeof q.valid_until === 'undefined'
+          ));
+          if (missingDueFields) {
+            console.warn('[QuotesContext] RPC get_quotes lacks due date fields; falling back to direct select');
+            const { data: rows, error: selErr } = await supabase
+              .from('quotes')
+              .select('id, quote_number, customer_id, status, subject, description, total_amount, tax_rate, tax_amount, discount_percentage, discount_amount, final_amount, valid_until, sent_date, approved_date, created_at, updated_at, production_due_date, customer_due_date, payment_due_date, terms_conditions, customers:customer_id (name, company)')
+              .order('created_at', { ascending: false })
+              .limit(filters.page_size || 25);
+            if (!selErr && Array.isArray(rows)) {
+              const mapped = rows.map((r: any) => ({
+                ...r,
+                customer_name: r.customers?.name || null,
+                customer_company: r.customers?.company || null,
+              }));
+              setQuotes(mapped as any);
+            } else {
+              setQuotes(quotesData as any);
+            }
+          } else {
+            // Merge missing due date fields from direct select by IDs
+            try {
+              const ids = quotesData.map((q: any) => q.id).filter(Boolean);
+              if (ids.length > 0) {
+                const { data: dueRows, error: dueErr } = await supabase
+                  .from('quotes')
+                  .select('id, customer_due_date, production_due_date, payment_due_date, valid_until')
+                  .in('id', ids);
+                if (!dueErr && Array.isArray(dueRows)) {
+                  const byId = new Map<string, any>();
+                  dueRows.forEach((r: any) => byId.set(r.id, r));
+                  const merged = quotesData.map((q: any) => ({
+                    ...q,
+                    ...byId.get(q.id),
+                  }));
+                  setQuotes(merged as any);
+                } else {
+                  setQuotes(quotesData);
+                }
+              } else {
+                setQuotes(quotesData);
+              }
+            } catch {
+              setQuotes(quotesData);
+            }
+          }
         } else {
           setQuotes([]);
         }
@@ -210,6 +276,26 @@ export const QuotesProvider: React.FC<QuotesProviderProps> = ({ children }) => {
         items_count: itemsArray.length
       });
 
+      // Normalize date fields to YYYY-MM-DD strings to avoid timezone drift and RPC type mismatch
+      const formatDateParam = (d?: Date) => {
+        if (!d) return null;
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+      };
+      const prodDueStr = formatDateParam(quoteData.production_due_date as any ?? (quoteData as any).productionDueDate);
+      const custDueStr = formatDateParam(quoteData.customer_due_date as any ?? (quoteData as any).customerDueDate);
+      const payDueStr = formatDateParam(quoteData.payment_due_date as any ?? (quoteData as any).paymentDueDate);
+      const invDateStr = formatDateParam(quoteData.invoice_date as any ?? (quoteData as any).invoiceDate);
+
+      console.debug('🔍 [DEBUG] QuotesContext - normalized date params', {
+        production_due_date: prodDueStr,
+        customer_due_date: custDueStr,
+        payment_due_date: payDueStr,
+        invoice_date: invDateStr,
+      });
+
       // Primary path: try v1 first (more likely to be in schema cache), then v2
       let data: any = null;
       let error: any = null;
@@ -222,10 +308,10 @@ export const QuotesProvider: React.FC<QuotesProviderProps> = ({ children }) => {
         valid_until_days: quoteData.valid_until_days || 30,
         notes: quoteData.notes,
         terms_conditions: quoteData.terms_conditions,
-        production_due_date: quoteData.production_due_date || null,
-        customer_due_date: quoteData.customer_due_date || null,
-        payment_due_date: quoteData.payment_due_date || null,
-        invoice_date: quoteData.invoice_date || null,
+        production_due_date: prodDueStr,
+        customer_due_date: custDueStr,
+        payment_due_date: payDueStr,
+        invoice_date: invDateStr,
         items: itemsArray
       }));
 
@@ -239,10 +325,10 @@ export const QuotesProvider: React.FC<QuotesProviderProps> = ({ children }) => {
           valid_until_days: quoteData.valid_until_days || 30,
           notes: quoteData.notes,
           terms_conditions: quoteData.terms_conditions,
-          production_due_date: quoteData.production_due_date || null,
-          customer_due_date: quoteData.customer_due_date || null,
-          payment_due_date: quoteData.payment_due_date || null,
-          invoice_date: quoteData.invoice_date || null,
+          production_due_date: prodDueStr,
+          customer_due_date: custDueStr,
+          payment_due_date: payDueStr,
+          invoice_date: invDateStr,
           items: itemsArray
         }));
       }
@@ -267,10 +353,10 @@ export const QuotesProvider: React.FC<QuotesProviderProps> = ({ children }) => {
             valid_until_days: quoteData.valid_until_days || 30,
             notes: quoteData.notes || null,
             terms_conditions: quoteData.terms_conditions || null,
-            production_due_date: quoteData.production_due_date || null,
-            customer_due_date: quoteData.customer_due_date || null,
-            payment_due_date: quoteData.payment_due_date || null,
-            invoice_date: quoteData.invoice_date || null
+            production_due_date: prodDueStr,
+            customer_due_date: custDueStr,
+            payment_due_date: payDueStr,
+            invoice_date: invDateStr
           });
           if (cqErr || !cqData?.quote_id) {
             console.error('❌ [DEBUG] Fallback create_quote failed', cqErr);
@@ -442,6 +528,12 @@ export const QuotesProvider: React.FC<QuotesProviderProps> = ({ children }) => {
       }
 
       console.log('🔍 [DEBUG] QuotesContext - Quote deletion successful');
+      // Soft-cancel associated jobs (non-destructive)
+      try {
+        await supabase.rpc('cancel_jobs_for_quote', { p_quote_id: quoteId, p_reason: 'Quote deleted' });
+      } catch (e) {
+        console.warn('Failed to soft-cancel jobs for quote', e);
+      }
       return { success: true };
     } catch (err) {
       console.error('🔍 [DEBUG] QuotesContext - Error deleting quote:', err);
