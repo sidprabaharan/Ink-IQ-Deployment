@@ -8,6 +8,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ChevronDown, FileText, Palette, CheckCircle, Cog, Package, DollarSign, CreditCard, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useOrganization } from "@/context/OrganizationContext";
+import { runStatusChangeAutomations } from "@/lib/automation";
 
 interface QuoteStatusDropdownProps {
   currentStatus: string;
@@ -39,12 +41,21 @@ const dbStatusOptions = [
 
 export function QuoteStatusDropdown({ currentStatus, onStatusChange, useDbStatuses = false }: QuoteStatusDropdownProps) {
   const { toast } = useToast();
+  const { organization } = useOrganization();
 
   const handleStatusSelect = (status: string) => {
     onStatusChange(status);
     toast({
       title: "Status Updated",
       description: `Quote status changed to ${status}`,
+    });
+
+    // Fire status-change automations
+    runStatusChangeAutomations(organization?.org_settings, {
+      entityType: 'quote',
+      toStatus: status,
+    }, {
+      notify: (title, description) => toast({ title, description }),
     });
   };
 

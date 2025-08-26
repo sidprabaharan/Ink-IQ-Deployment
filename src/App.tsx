@@ -70,6 +70,8 @@ function App() {
                   <Route path="/leads" element={<ProtectedRoute><AppLayout><Leads /></AppLayout></ProtectedRoute>} />
                   <Route path="/tasks" element={<ProtectedRoute><AppLayout><Tasks /></AppLayout></ProtectedRoute>} />
                   <Route path="/messages" element={<ProtectedRoute><AppLayout><Emails /></AppLayout></ProtectedRoute>} />
+                  {/* Alias to support redirects from OAuth callbacks */}
+                  <Route path="/emails" element={<ProtectedRoute><AppLayout><Emails /></AppLayout></ProtectedRoute>} />
                   <Route path="/calendar" element={<ProtectedRoute><AppLayout><Calendar /></AppLayout></ProtectedRoute>} />
                   <Route path="/products" element={<ProtectedRoute><AppLayout><Products /></AppLayout></ProtectedRoute>} />
                   <Route path="/purchase-orders" element={<ProtectedRoute><AppLayout><PurchaseOrders /></AppLayout></ProtectedRoute>} />

@@ -5,11 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Lead } from '@/types/lead';
-import { X, Edit, Building2, User, Globe, Phone, Mail, MapPin, DollarSign, Calendar, Activity, Bot, ExternalLink, FileText, Zap } from 'lucide-react';
+import { X, Edit, Building2, User, Globe, Phone, Mail, MapPin, DollarSign, Calendar, Activity, Bot, ExternalLink, FileText, Zap, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import ContactInfoSection from './ContactInfoSection';
 import ActivityTimeline from './ActivityTimeline';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { supabase } from '@/lib/supabase';
 
 interface EnhancedLeadDetailsProps {
   lead: Lead | null;
@@ -53,6 +55,18 @@ export default function EnhancedLeadDetails({
     onOpenChange(false);
   };
 
+  const handleDeleteLead = async () => {
+    if (!lead) return;
+    const { error } = await supabase.rpc('delete_lead', { p_lead_id: lead.id });
+    if (error) {
+      console.error('Failed to delete lead', error);
+      return;
+    }
+    onOpenChange(false);
+    // Emit a custom event so the page can refresh its list
+    window.dispatchEvent(new CustomEvent('leads:refresh'));
+  };
+
   // Check if quote exists based on lead status and quoteId
   const hasExistingQuote = lead.quoteId || ['quoted', 'follow_up', 'closed_won', 'closed_lost'].includes(lead.status);
 
@@ -73,6 +87,26 @@ export default function EnhancedLeadDetails({
                 <Edit className="h-4 w-4 mr-2" />
                 Edit
               </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" size="sm">
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This action cannot be undone. This will permanently delete the lead and remove it from your pipeline.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleDeleteLead}>Delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </div>
           <div className="flex items-center space-x-4 text-sm text-muted-foreground mt-2">

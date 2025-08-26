@@ -51,6 +51,55 @@ export function EnhancedEmailDetail({
 
   const senderAccount = accounts.find(acc => acc.id === email.accountId);
 
+  // Normalize common encoding artifacts (mojibake) that can appear in stored bodies
+  const decodeLatin1ToUtf8IfNeeded = (text: string) => {
+    try {
+      // Attempt to interpret the string as mis-decoded Latin1 and convert to UTF-8
+      // eslint-disable-next-line deprecation/deprecation
+      const decoded = decodeURIComponent(escape(text));
+      // Heuristic: if decoded removes typical mojibake markers, prefer it
+      const bad = /Ã|Â|â|â€¢|â¢/.test(text);
+      const badAfter = /Ã|Â|â|â€¢|â¢/.test(decoded);
+      return bad && !badAfter ? decoded : text;
+    } catch {
+      return text;
+    }
+  };
+
+  const sanitizeText = (text: string) => {
+    if (!text) return '';
+    const base = decodeLatin1ToUtf8IfNeeded(text);
+    return base
+      // Remove stray \u00C2 (Â) often preceding NBSP
+      .replace(/\u00C2/g, '')
+      .replace(/Â\s?/g, ' ')
+      // Fix UTF-8 mis-decoded punctuation
+      .replace(/â/g, '—') // em dash
+      .replace(/â/g, '–') // en dash
+      .replace(/â/g, '’') // right single quote
+      .replace(/â/g, '‘') // left single quote
+      .replace(/â/g, '“') // left double quote
+      .replace(/â/g, '”') // right double quote
+      .replace(/â¦/g, '…')  // ellipsis
+      // Bullets and common symbols
+      .replace(/â¢/g, '•')
+      .replace(/â€¢/g, '•')
+      .replace(/â¢/g, '™')
+      .replace(/â®/g, '®')
+      .replace(/â©/g, '©')
+      // Occasionally NBSPs show as \u00A0 or as A-circumflex space
+      .replace(/\u00A0/g, ' ')
+      .replace(/\s+$/gm, '');
+  };
+
+  const sanitizeHtml = (html: string) => {
+    if (!html) return '';
+    // Apply text sanitization to the HTML string as well
+    return sanitizeText(html)
+      // Normalize explicit NBSP sequences if they showed up as text
+      .replace(/Â&nbsp;/g, '&nbsp;');
+  };
+
   const handleReply = (mode: 'reply' | 'replyAll' | 'forward') => {
     setComposerMode(mode);
     setShowComposer(true);
@@ -141,7 +190,7 @@ export function EnhancedEmailDetail({
     return messages;
   };
 
-  const conversationMessages = parseConversation(email.content);
+  const conversationMessages = parseConversation(sanitizeText(email.content || ''));
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(
     new Set([conversationMessages[conversationMessages.length - 1]?.id])
   );
@@ -294,9 +343,16 @@ export function EnhancedEmailDetail({
                       </div>
                     )}
                     
-                    <div className="prose max-w-none text-sm leading-relaxed whitespace-pre-wrap">
-                      {message.content}
-                    </div>
+                    {index === conversationMessages.length - 1 && email.htmlContent ? (
+                      <div
+                        className="prose max-w-none text-sm leading-relaxed"
+                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(email.htmlContent) }}
+                      />
+                    ) : (
+                      <div className="prose max-w-none text-sm leading-relaxed whitespace-pre-wrap">
+                        {sanitizeText(message.content)}
+                      </div>
+                    )}
                     
                     {/* Message Actions */}
                     <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100">
@@ -314,6 +370,22 @@ export function EnhancedEmailDetail({
               </div>
             );
           })}
+
+          {/* Fallback: if no parsed messages, render the raw body (HTML preferred) */}
+          {conversationMessages.length === 0 && (
+            <div className="px-6 py-6">
+              {email.htmlContent ? (
+                <div
+                  className="prose max-w-none text-sm leading-relaxed"
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(email.htmlContent) }}
+                />
+              ) : (
+                <div className="prose max-w-none text-sm leading-relaxed whitespace-pre-wrap">
+                  {sanitizeText(email.content || '')}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Attachments Section */}
           {email.attachments.length > 0 && (

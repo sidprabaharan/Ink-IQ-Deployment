@@ -43,7 +43,7 @@ export function InvoiceSummarySection({ quoteData }: InvoiceSummarySectionProps)
   return (
     <div className="space-y-4">
       <div className="bg-blue-100 p-4 rounded-md">
-        <h3 className="text-base font-medium text-center">Invoice Summary</h3>
+        <h3 className="text-base font-medium text-center">Quote Summary</h3>
       </div>
       <div className="space-y-2">
         <div className="flex justify-between items-center">
@@ -73,8 +73,14 @@ export function InvoiceSummarySection({ quoteData }: InvoiceSummarySectionProps)
             />
           </div>
         </div>
+        {discountAmount > 0 && (
+          <div className="flex justify-between items-center text-red-600">
+            <span className="text-sm">- Discount</span>
+            <span className="text-sm">-${discountAmount.toFixed(2)}</span>
+          </div>
+        )}
         
-        {parseFloat(discountValue) > 0 && (
+        {discountAmount > 0 && (
           <div className="flex justify-between items-center">
             <span className="text-sm">New Sub Total</span>
             <span className="text-sm">${newSubTotal.toFixed(2)}</span>
@@ -92,7 +98,13 @@ export function InvoiceSummarySection({ quoteData }: InvoiceSummarySectionProps)
             />
           </div>
         </div>
-        <div className="flex justify-between items-center font-medium">
+        {salesTaxAmount > 0 && (
+          <div className="flex justify-between items-center text-green-700">
+            <span className="text-sm">+ Sales Tax</span>
+            <span className="text-sm">+${salesTaxAmount.toFixed(2)}</span>
+          </div>
+        )}
+        <div className="flex justify-between items-center font-medium border-t pt-2 mt-2">
           <span>Total Due</span>
           <span>${totalDue.toFixed(2)}</span>
         </div>

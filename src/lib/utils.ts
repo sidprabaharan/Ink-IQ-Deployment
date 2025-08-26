@@ -5,19 +5,21 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// Asset URL helper: switch between Supabase signed URL and local public path
+export async function getAssetUrl(path: string): Promise<string> {
+  const mode = import.meta.env.VITE_ASSETS_MODE;
+  if (mode === 'local') {
+    // Serve from public/artwork/... when in local mode
+    // If a full path like orgId/... is provided, keep it under /artwork/
+    const clean = path.replace(/^\/+/, '');
+    return `/artwork/${clean}`;
+  }
+  // Fallback: caller should handle signing with Supabase; return raw path
+  return path;
+}
+
 // Minimal telemetry helper: tries RPC `emit_event`, falls back to `telemetry_events` table
-export async function track(event: string, props: Record<string, any> = {}) {
-  try {
-    // Prefer an RPC if present
-    // @ts-ignore
-    const { supabase } = await import('@/lib/supabase');
-    const payload = { p_event: event, p_properties: props } as any;
-    const rpc = await supabase.rpc('emit_event', payload);
-    if (!rpc.error) return;
-  } catch {}
-  try {
-    // @ts-ignore
-    const { supabase } = await import('@/lib/supabase');
-    await supabase.from('telemetry_events').insert({ event, properties: props, created_at: new Date().toISOString() });
-  } catch {}
+export async function track(_event: string, _props: Record<string, any> = {}) {
+  // Telemetry disabled in this environment to avoid noise and 400s
+  return;
 }

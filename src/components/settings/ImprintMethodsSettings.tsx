@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,7 @@ import { IMPRINT_METHODS } from '@/types/imprint';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { track } from '@/lib/utils';
+import { useOrganization } from '@/context/OrganizationContext';
 
 // Use the canonical list across the app: Screen Printing, Embroidery, DTF, DTG
 const imprintMethods = IMPRINT_METHODS;
@@ -69,6 +70,23 @@ interface ImprintMethodConfig {
     name: string;
     price: number;
   }>;
+  embroideryPricing?: {
+    stitchColumns: string[];
+    rows: Array<{ quantity: string; values: number[] }>;
+  };
+  // DTG-specific pricing (by logo size)
+  dtgWhitePricing?: Array<{
+    quantity: string;
+    size4x4: number;
+    size10x10: number;
+    size15x15: number;
+  }>;
+  dtgColoredPricing?: Array<{
+    quantity: string;
+    size4x4: number;
+    size10x10: number;
+    size15x15: number;
+  }>;
 }
 
 export function ImprintMethodsSettings() {
@@ -77,6 +95,27 @@ export function ImprintMethodsSettings() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [newMethodType, setNewMethodType] = useState<string>('');
   const { toast } = useToast();
+  const { organization, updateOrganizationSettings } = useOrganization();
+
+  useEffect(() => {
+    const s: any = organization?.org_settings || {};
+    const fromOrg = (s.imprints?.methods as ImprintMethodConfig[] | undefined) || [];
+    if (Array.isArray(fromOrg)) {
+      console.debug('[Imprints] load from org settings', { count: fromOrg.length, methods: fromOrg.map(m => ({ id: m.id, method: m.method, label: m.label })) });
+      setConfiguredMethods(fromOrg);
+    }
+  }, [organization]);
+
+  const persistImprintMethods = async (methods: ImprintMethodConfig[] = configuredMethods) => {
+    const existing = ((organization?.org_settings as any)?.imprints) || {};
+    const res = await updateOrganizationSettings({ imprints: { ...existing, methods } });
+    if (res.success) {
+      toast({ title: 'Saved', description: 'Imprint methods saved.' });
+      track('prod_settings_updated', { entity_type: 'imprint_methods', action: 'save', count: methods.length });
+    } else {
+      toast({ variant: 'destructive', title: 'Save failed', description: res.error || 'Please try again.' });
+    }
+  };
 
   const handleAddMethod = () => {
     if (!newMethodType) return;
@@ -84,7 +123,7 @@ export function ImprintMethodsSettings() {
     const methodInfo = imprintMethods.find(m => m.value === newMethodType);
     if (!methodInfo) return;
 
-    const newMethod: ImprintMethodConfig = {
+    const base: ImprintMethodConfig = {
       id: `${newMethodType}_${Date.now()}`,
       method: newMethodType,
       label: methodInfo.label,
@@ -142,6 +181,54 @@ export function ImprintMethodsSettings() {
       ]
     };
 
+    const newMethod: ImprintMethodConfig = newMethodType === 'dtg' ? {
+      ...base,
+      fees: [ { name: 'Setup', price: 0 } ],
+      extraCharges: [ { name: 'Sleeves', price: 0 }, { name: 'Fleece', price: 0 }, { name: 'Over Zipper', price: 0 }, { name: 'Over Pocket', price: 0 }, { name: 'Neck Label', price: 0 }, { name: 'Kids Shirts', price: 0 } ],
+      dtgWhitePricing: [
+        { quantity: '12-24', size4x4: 0, size10x10: 0, size15x15: 0 },
+        { quantity: '25-50', size4x4: 0, size10x10: 0, size15x15: 0 },
+        { quantity: '51-100', size4x4: 0, size10x10: 0, size15x15: 0 },
+        { quantity: '101-500', size4x4: 0, size10x10: 0, size15x15: 0 },
+      ],
+      dtgColoredPricing: [
+        { quantity: '12-24', size4x4: 0, size10x10: 0, size15x15: 0 },
+        { quantity: '25-50', size4x4: 0, size10x10: 0, size15x15: 0 },
+        { quantity: '51-100', size4x4: 0, size10x10: 0, size15x15: 0 },
+        { quantity: '101-500', size4x4: 0, size10x10: 0, size15x15: 0 },
+      ]
+    } : newMethodType === 'embroidery' ? {
+      ...base,
+      // Seed an embroidery pricing grid (stitch ranges x quantity ranges)
+      embroideryPricing: {
+        stitchColumns: ['0-7000', '7001-8000', '8001-9000', '9001-10000', '10001+'],
+        rows: [
+          { quantity: '12-24', values: [0, 0, 0, 0, 0] },
+          { quantity: '25-50', values: [0, 0, 0, 0, 0] },
+          { quantity: '51-100', values: [0, 0, 0, 0, 0] },
+          { quantity: '101-250', values: [0, 0, 0, 0, 0] },
+          { quantity: '251-500', values: [0, 0, 0, 0, 0] },
+          { quantity: '501+', values: [0, 0, 0, 0, 0] },
+        ],
+      },
+      // Embroidery-specific common fees and charges
+      fees: [
+        { name: 'Digitizing', price: 0 },
+        { name: 'Sew Out Sample', price: 0 },
+        { name: 'Artwork Adjustments', price: 0 },
+        { name: 'Names', price: 0 },
+      ],
+      extraCharges: [
+        { name: 'Metallic Thread', price: 0 },
+        { name: '3D Puff', price: 0 },
+        { name: 'Appliqué', price: 0 },
+        { name: 'Glow in the Dark Thread', price: 0 },
+        { name: 'Rayon Thread', price: 0 },
+        { name: 'Reflective Thread', price: 0 },
+      ],
+    } : base;
+
+    console.debug('[Imprints] add method', { id: newMethod.id, method: newMethod.method, label: newMethod.label });
     setConfiguredMethods(prev => [...prev, newMethod]);
     setSelectedMethod(newMethod.id);
     setIsAddDialogOpen(false);
@@ -176,14 +263,35 @@ export function ImprintMethodsSettings() {
   };
 
   const selectedConfig = configuredMethods.find(m => m.id === selectedMethod);
+  if (selectedConfig) {
+    console.debug('[Imprints] selected method config', { id: selectedConfig.id, method: selectedConfig.method, label: selectedConfig.label });
+  } else {
+    if (selectedMethod) console.debug('[Imprints] no config found for selectedMethod', selectedMethod);
+  }
   const availableMethods = imprintMethods.filter(method => 
     !configuredMethods.some(config => config.method === method.value)
   );
 
   if (selectedConfig) {
+    if (selectedConfig.method === 'embroidery') {
+      console.debug('[Imprints] rendering EmbroideryConfig');
+      return <EmbroideryConfig config={selectedConfig} onBack={() => setSelectedMethod(null)} onUpdate={(updated) => {
+        setConfiguredMethods(prev => prev.map(m => m.id === updated.id ? updated : m));
+      }} onPersist={() => persistImprintMethods()} />;
+    }
+    if (selectedConfig.method === 'general') {
+      return <GeneralConfig config={selectedConfig} onBack={() => setSelectedMethod(null)} onUpdate={(updated) => {
+        setConfiguredMethods(prev => prev.map(m => m.id === updated.id ? updated : m));
+      }} onPersist={() => persistImprintMethods()} />;
+    }
+    if (selectedConfig.method === 'dtg') {
+      return <DTGConfig config={selectedConfig} onBack={() => setSelectedMethod(null)} onUpdate={(updated) => {
+        setConfiguredMethods(prev => prev.map(m => m.id === updated.id ? updated : m));
+      }} onPersist={() => persistImprintMethods()} />;
+    }
     return <ScreenPrintingConfig config={selectedConfig} onBack={() => setSelectedMethod(null)} onUpdate={(updated) => {
       setConfiguredMethods(prev => prev.map(m => m.id === updated.id ? updated : m));
-    }} />;
+    }} onPersist={() => persistImprintMethods()} />;
   }
 
   return (
@@ -287,10 +395,15 @@ export function ImprintMethodsSettings() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="sm">
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          const clone = { ...method, id: `${method.method}_${Date.now()}` };
+                          setConfiguredMethods(prev => [...prev, clone]);
+                        }}>
                           <Copy className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm">
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          setConfiguredMethods(prev => prev.filter(m => m.id !== method.id));
+                        }}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                         <Button 
@@ -305,6 +418,9 @@ export function ImprintMethodsSettings() {
                   ))}
                 </div>
               )}
+              <div className="flex justify-end pt-4">
+                <Button onClick={() => persistImprintMethods()}>Save Changes</Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -313,12 +429,14 @@ export function ImprintMethodsSettings() {
   );
 }
 
-function ScreenPrintingConfig({ config, onBack, onUpdate }: { 
+function ScreenPrintingConfig({ config, onBack, onUpdate, onPersist }: { 
   config: ImprintMethodConfig; 
   onBack: () => void;
   onUpdate: (config: ImprintMethodConfig) => void;
+  onPersist: () => void;
 }) {
   const [localConfig, setLocalConfig] = useState(config);
+  const [newSpecialty, setNewSpecialty] = useState('');
 
   const inkSpecialties = [
     'Plastisol (Industry Standard)', 'Water Based', 'Discharge', 'Puff Ink',
@@ -339,6 +457,38 @@ function ScreenPrintingConfig({ config, onBack, onUpdate }: {
         [key]: value
       }
     });
+  };
+
+  // Embroidery pricing helpers (single definition)
+  const getDefaultEP = () => ({
+    stitchColumns: ['0-7000', '7001-8000', '8001-9000', '9001-10000', '10001+'],
+    rows: [
+      { quantity: '12-24', values: [0,0,0,0,0] },
+      { quantity: '25-50', values: [0,0,0,0,0] },
+      { quantity: '51-100', values: [0,0,0,0,0] },
+      { quantity: '101-250', values: [0,0,0,0,0] },
+      { quantity: '251-500', values: [0,0,0,0,0] },
+      { quantity: '501+', values: [0,0,0,0,0] },
+    ]
+  });
+
+  const addStitchColumn = () => {
+    const ep = localConfig.embroideryPricing || getDefaultEP();
+    const nextCols = [...ep.stitchColumns, 'New'];
+    const nextRows = ep.rows.map(r => ({ ...r, values: [...r.values, 0] }));
+    updateConfig({ embroideryPricing: { stitchColumns: nextCols, rows: nextRows } });
+  };
+
+  const addQuantityRow = () => {
+    const ep = localConfig.embroideryPricing || getDefaultEP();
+    const values = Array(ep.stitchColumns.length).fill(0);
+    updateConfig({ embroideryPricing: { stitchColumns: ep.stitchColumns, rows: [...ep.rows, { quantity: 'New', values }] } });
+  };
+
+  const setPriceCell = (rowIdx: number, colIdx: number, val: number) => {
+    const ep = localConfig.embroideryPricing || getDefaultEP();
+    const rows = ep.rows.map((r, i) => i === rowIdx ? { ...r, values: r.values.map((v, j) => j === colIdx ? val : v) } : r);
+    updateConfig({ embroideryPricing: { stitchColumns: ep.stitchColumns, rows } });
   };
 
   const updateTurnaroundTime = (index: number, field: string, value: number) => {
@@ -387,6 +537,7 @@ function ScreenPrintingConfig({ config, onBack, onUpdate }: {
         </div>
       </div>
 
+      <div className="space-y-6" style={{ maxHeight: '70vh', overflowY: 'auto', paddingRight: 4 }}>
       <Card>
         <CardHeader>
           <CardTitle>{localConfig.label} Information</CardTitle>
@@ -418,6 +569,16 @@ function ScreenPrintingConfig({ config, onBack, onUpdate }: {
               <Plus className="h-4 w-4 mr-2" />
               Add custom ink specialty...
             </Button>
+            <div className="flex gap-2 mt-2">
+              <Input placeholder="Add custom ink specialty..." value={newSpecialty} onChange={(e) => setNewSpecialty(e.target.value)} />
+              <Button type="button" onClick={() => {
+                const name = newSpecialty.trim();
+                if (!name) return;
+                const current = localConfig.inkSpecialties || [];
+                if (!current.includes(name)) updateConfig({ inkSpecialties: [...current, name] });
+                setNewSpecialty('');
+              }}>Add</Button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -785,8 +946,13 @@ function ScreenPrintingConfig({ config, onBack, onUpdate }: {
             <div className="flex items-center justify-between mb-4">
               <h4 className="font-medium">Pricing Grid</h4>
               <div className="space-x-2">
-                <Button variant="outline" size="sm">Add Quantity Range</Button>
-                <Button variant="outline" size="sm">Add Color Count</Button>
+                <Button variant="outline" size="sm" onClick={() => {
+                  const next = [ ...(localConfig.pricingGrid || []), { quantity: 'New Range', oneColor: 0, twoColors: 0, threeColors: 0, fourPlusColors: 0 } ];
+                  updateConfig({ pricingGrid: next });
+                }}>Add Quantity Range</Button>
+                <Button variant="outline" size="sm" onClick={() => {
+                  alert('Color columns are fixed up to 4+ Colors for now.');
+                }}>Add Color Count</Button>
               </div>
             </div>
             <div className="border rounded-lg overflow-hidden">
@@ -871,14 +1037,18 @@ function ScreenPrintingConfig({ config, onBack, onUpdate }: {
                     />
                   </div>
                   <div className="p-3">
-                    <Button variant="ghost" size="sm">
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      const updated = [...(localConfig.fees || [])];
+                      updated.splice(index, 1);
+                      updateConfig({ fees: updated });
+                    }}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
               ))}
             </div>
-            <Button variant="ghost" size="sm" className="mt-2">Add Fee</Button>
+            <Button variant="ghost" size="sm" className="mt-2" onClick={() => updateConfig({ fees: [ ...(localConfig.fees || []), { name: 'New Fee', price: 0 } ] })}>Add Fee</Button>
           </div>
 
           <Separator />
@@ -907,16 +1077,521 @@ function ScreenPrintingConfig({ config, onBack, onUpdate }: {
                     />
                   </div>
                   <div className="p-3">
-                    <Button variant="ghost" size="sm">
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      const updated = [...(localConfig.extraCharges || [])];
+                      updated.splice(index, 1);
+                      updateConfig({ extraCharges: updated });
+                    }}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
               ))}
             </div>
+            <Button variant="ghost" size="sm" className="mt-2" onClick={() => updateConfig({ extraCharges: [ ...(localConfig.extraCharges || []), { name: 'New Charge', price: 0 } ] })}>Add Charge</Button>
           </div>
         </CardContent>
       </Card>
+
+      {/* Size limits & quantities */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Size Limits</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label>Maximum Width in Inches</Label>
+              <Input type="number" value={localConfig.maxWidth || ''} onChange={(e) => updateConfig({ maxWidth: parseInt(e.target.value) || 0 })} placeholder="e.g., 12" />
+            </div>
+            <div>
+              <Label>Maximum Height in Inches</Label>
+              <Input type="number" value={localConfig.maxHeight || ''} onChange={(e) => updateConfig({ maxHeight: parseInt(e.target.value) || 0 })} placeholder="e.g., 16" />
+            </div>
+            <div>
+              <Label>Maximum Sleeve Width in Inches</Label>
+              <Input type="number" value={localConfig.maxSleeveWidth || ''} onChange={(e) => updateConfig({ maxSleeveWidth: parseInt(e.target.value) || 0 })} placeholder="e.g., 3" />
+            </div>
+            <div>
+              <Label>Maximum Sleeve Height in Inches</Label>
+              <Input type="number" value={localConfig.maxSleeveHeight || ''} onChange={(e) => updateConfig({ maxSleeveHeight: parseInt(e.target.value) || 0 })} placeholder="e.g., 5" />
+            </div>
+          </div>
+          <div className="mt-3">
+            <Label>Logo size additional notes</Label>
+            <Textarea value={localConfig.logoSizeNotes || ''} onChange={(e) => updateConfig({ logoSizeNotes: e.target.value })} placeholder="Any additional notes about logo sizing..." />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Order Quantities & Capacity</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label>Minimum Order Quantity</Label>
+              <Input type="number" value={localConfig.minQuantity || ''} onChange={(e) => updateConfig({ minQuantity: parseInt(e.target.value) || 0 })} placeholder="e.g., 1" />
+            </div>
+            <div>
+              <Label>Max Order Quantity</Label>
+              <Input type="number" value={localConfig.maxQuantity || ''} onChange={(e) => updateConfig({ maxQuantity: parseInt(e.target.value) || 0 })} placeholder="e.g., 1000" />
+            </div>
+            <div>
+              <Label>Daily Capacity (Average Logo)</Label>
+              <Input type="number" value={localConfig.dailyCapacity || ''} onChange={(e) => updateConfig({ dailyCapacity: parseInt(e.target.value) || 0 })} placeholder="e.g., 150" />
+            </div>
+            <div>
+              <Label>Damage Rate (%)</Label>
+              <Input type="number" value={localConfig.damageRate || ''} onChange={(e) => updateConfig({ damageRate: parseInt(e.target.value) || 0 })} placeholder="e.g., 1.5" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Turnaround Times */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Embroidery Production Turnaround Times</CardTitle>
+          <CardDescription>How many business days does it take you to produce embroidery orders?</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-3 gap-0 bg-muted">
+              <div className="p-3 font-medium">Type</div>
+              <div className="p-3 font-medium">Days</div>
+              <div className="p-3 font-medium">Extra Charge %</div>
+            </div>
+            {(localConfig.turnaroundTimes || []).map((t, i) => (
+              <div key={i} className="grid grid-cols-3 gap-0 border-t">
+                <div className="p-3">{t.type}</div>
+                <div className="p-3"><Input type="number" value={t.days} onChange={(e) => {
+                  const up = [...(localConfig.turnaroundTimes || [])];
+                  up[i] = { ...up[i], days: parseInt(e.target.value) || 0 } as any;
+                  updateConfig({ turnaroundTimes: up });
+                }} className="h-8" /></div>
+                <div className="p-3"><Input type="number" value={t.extraCharge} onChange={(e) => {
+                  const up = [...(localConfig.turnaroundTimes || [])];
+                  up[i] = { ...up[i], extraCharge: parseInt(e.target.value) || 0 } as any;
+                  updateConfig({ turnaroundTimes: up });
+                }} className="h-8" /></div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Pricing Grid */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>Embroidery Pricing Grid</CardTitle>
+            <div className="space-x-2">
+              <Button variant="outline" size="sm" onClick={addQuantityRow}>Add Quantity Range</Button>
+              <Button variant="outline" size="sm" onClick={addStitchColumn}>Add Stitch Range</Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {(() => {
+            const ep = localConfig.embroideryPricing || getDefaultEP();
+            const header = (
+              <div className="grid" style={{ gridTemplateColumns: `200px repeat(${ep.stitchColumns.length}, 1fr)` }}>
+                <div className="p-3 bg-muted font-medium">Stitch Count</div>
+                {ep.stitchColumns.map((c, ci) => (
+                  <div key={ci} className="p-3 bg-muted font-medium">{c}</div>
+                ))}
+              </div>
+            );
+            const rows = ep.rows.map((r, ri) => (
+              <div key={ri} className="grid border-t" style={{ gridTemplateColumns: `200px repeat(${ep.stitchColumns.length}, 1fr)` }}>
+                <div className="p-3">{r.quantity}</div>
+                {r.values.map((v, vi) => (
+                  <div key={vi} className="p-3"><Input type="number" step="0.01" value={v} onChange={(e) => setPriceCell(ri, vi, parseFloat(e.target.value) || 0)} className="h-8" /></div>
+                ))}
+              </div>
+            ));
+            return (
+              <div className="border rounded-lg overflow-hidden">
+                {header}
+                {rows}
+              </div>
+            );
+          })()}
+        </CardContent>
+      </Card>
+
+      {/* Fees */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Fees</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-3 gap-0 bg-muted">
+              <div className="p-3 font-medium">Name</div>
+              <div className="p-3 font-medium">Price</div>
+              <div className="p-3 font-medium">Actions</div>
+            </div>
+            {(localConfig.fees || [ { name: 'Digitizing', price: 0 }, { name: 'Sew Out Sample', price: 0 }, { name: 'Artwork Adjustments', price: 0 }, { name: 'Names', price: 0 } ]).map((fee, idx) => (
+              <div key={idx} className="grid grid-cols-3 gap-0 border-t">
+                <div className="p-3">{fee.name}</div>
+                <div className="p-3"><Input type="number" step="0.01" value={fee.price} onChange={(e) => {
+                  const up = [...(localConfig.fees || [])]; if (!up[idx]) up[idx] = { name: fee.name, price: 0 } as any; up[idx].price = parseFloat(e.target.value) || 0; updateConfig({ fees: up });
+                }} className="h-8" /></div>
+                <div className="p-3"><Button variant="ghost" size="sm" onClick={() => { const up = [...(localConfig.fees || [])]; up.splice(idx, 1); updateConfig({ fees: up }); }}><Trash2 className="h-4 w-4" /></Button></div>
+              </div>
+            ))}
+          </div>
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => updateConfig({ fees: [ ...(localConfig.fees || []), { name: 'New Fee', price: 0 } ] })}>Add Fee</Button>
+        </CardContent>
+      </Card>
+
+      {/* Extra Charges */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Extra Charges</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-3 gap-0 bg-muted">
+              <div className="p-3 font-medium">Name</div>
+              <div className="p-3 font-medium">Price</div>
+              <div className="p-3 font-medium">Actions</div>
+            </div>
+            {(localConfig.extraCharges || [ { name: 'Metallic Thread', price: 0 }, { name: '3D Puff', price: 0 }, { name: 'Appliqué', price: 0 }, { name: 'Glow in the Dark Thread', price: 0 }, { name: 'Rayon Thread', price: 0 }, { name: 'Reflective Thread', price: 0 } ]).map((ch, idx) => (
+              <div key={idx} className="grid grid-cols-3 gap-0 border-t">
+                <div className="p-3">{ch.name}</div>
+                <div className="p-3"><Input type="number" step="0.01" value={ch.price} onChange={(e) => {
+                  const up = [...(localConfig.extraCharges || [])]; if (!up[idx]) up[idx] = { name: ch.name, price: 0 } as any; up[idx].price = parseFloat(e.target.value) || 0; updateConfig({ extraCharges: up });
+                }} className="h-8" /></div>
+                <div className="p-3"><Button variant="ghost" size="sm" onClick={() => { const up = [...(localConfig.extraCharges || [])]; up.splice(idx, 1); updateConfig({ extraCharges: up }); }}><Trash2 className="h-4 w-4" /></Button></div>
+              </div>
+            ))}
+          </div>
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => updateConfig({ extraCharges: [ ...(localConfig.extraCharges || []), { name: 'New Charge', price: 0 } ] })}>Add Charge</Button>
+        </CardContent>
+      </Card>
+
+      </div>
+
+      <div className="flex items-center justify-between">
+        <Button variant="outline" onClick={() => onBack()}>Back</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => {
+            // reset minimal fields
+            const reset = { ...localConfig, inkSpecialties: [], capabilities: {}, fees: [], extraCharges: [] } as any;
+            setLocalConfig(reset);
+            onUpdate(reset);
+          }}>Reset to Defaults</Button>
+          <Button onClick={onPersist}>Save Changes</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmbroideryConfig({ config, onBack, onUpdate, onPersist }: {
+  config: ImprintMethodConfig;
+  onBack: () => void;
+  onUpdate: (config: ImprintMethodConfig) => void;
+  onPersist: () => void;
+}) {
+  const [localConfig, setLocalConfig] = useState(config);
+  const [newSpecialty, setNewSpecialty] = useState('');
+
+  const threadSpecialties = [
+    'Rayon', 'Polyester', '3D Puff', 'Glow in the Dark Thread', 'Cotton', 'Metallic', 'Appliqué', 'Reflective Thread'
+  ];
+
+  const updateConfig = (updates: Partial<ImprintMethodConfig>) => {
+    const updated = { ...localConfig, ...updates };
+    setLocalConfig(updated);
+    onUpdate(updated);
+  };
+
+  const updateCapability = (key: string, value: boolean) => {
+    updateConfig({
+      capabilities: {
+        ...localConfig.capabilities,
+        [key]: value
+      }
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4 mb-6">
+        <Button variant="ghost" onClick={onBack}>← Back</Button>
+        <div className="flex items-center gap-3">
+          <Settings2 className="h-6 w-6 text-primary" />
+          <div>
+            <h2 className="text-xl font-semibold">{localConfig.label}</h2>
+            <p className="text-sm text-muted-foreground">Configure your {localConfig.label.toLowerCase()} settings</p>
+          </div>
+          <div className="ml-auto">
+            <Switch checked={localConfig.enabled} onCheckedChange={(enabled) => handleToggleEnabled(localConfig.id, enabled)} />
+            <Label className="ml-2">Active</Label>
+          </div>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{localConfig.label} Information</CardTitle>
+          <CardDescription>Fill out this page if you offer {localConfig.label.toLowerCase()}. Skip if you don't.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Thread Specialties */}
+          <div>
+            <h4 className="font-medium mb-3">Select the embroidery thread types / specialties you offer.</h4>
+            <div className="grid grid-cols-2 gap-3">
+              {threadSpecialties.map((specialty) => (
+                <div key={specialty} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={specialty}
+                    checked={localConfig.inkSpecialties?.includes(specialty) || false}
+                    onCheckedChange={(checked) => {
+                      const current = localConfig.inkSpecialties || [];
+                      if (checked) updateConfig({ inkSpecialties: [...current, specialty] });
+                      else updateConfig({ inkSpecialties: current.filter(s => s !== specialty) });
+                    }}
+                  />
+                  <Label htmlFor={specialty} className="text-sm">{specialty}</Label>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-2">
+              <Input placeholder="Add custom thread specialty..." value={newSpecialty} onChange={(e) => setNewSpecialty(e.target.value)} />
+              <Button type="button" onClick={() => {
+                const name = newSpecialty.trim();
+                if (!name) return;
+                const current = localConfig.inkSpecialties || [];
+                if (!current.includes(name)) updateConfig({ inkSpecialties: [...current, name] });
+                setNewSpecialty('');
+              }}>Add</Button>
+            </div>
+          </div>
+
+          {/* UI Questions */}
+          <div className="space-y-4">
+            <div>
+              <Label className="text-sm font-medium">Do you embroider individual sleeve names?</Label>
+              <RadioGroup 
+                value={localConfig.capabilities?.sleeveNames ? 'yes' : 'no'}
+                onValueChange={(v) => updateCapability('sleeveNames', v === 'yes')}
+                className="flex gap-4 mt-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="yes" id="sleevenames-yes" />
+                  <Label htmlFor="sleevenames-yes">Yes</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="no" id="sleevenames-no" />
+                  <Label htmlFor="sleevenames-no">No</Label>
+                </div>
+              </RadioGroup>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center justify-between">
+        <Button variant="outline" onClick={() => onBack()}>Back</Button>
+        <Button onClick={onPersist}>Save Changes</Button>
+      </div>
+    </div>
+  );
+}
+
+function DTGConfig({ config, onBack, onUpdate, onPersist }: {
+  config: ImprintMethodConfig;
+  onBack: () => void;
+  onUpdate: (config: ImprintMethodConfig) => void;
+  onPersist: () => void;
+}) {
+  const [localConfig, setLocalConfig] = useState(config);
+
+  const updateConfig = (updates: Partial<ImprintMethodConfig>) => {
+    const updated = { ...localConfig, ...updates };
+    setLocalConfig(updated);
+    onUpdate(updated);
+  };
+
+  const addQuantityRow = (target: 'white' | 'colored') => {
+    const row = { quantity: 'New', size4x4: 0, size10x10: 0, size15x15: 0 };
+    if (target === 'white') updateConfig({ dtgWhitePricing: [ ...(localConfig.dtgWhitePricing || []), row ] });
+    else updateConfig({ dtgColoredPricing: [ ...(localConfig.dtgColoredPricing || []), row ] });
+  };
+
+  const updatePriceCell = (target: 'white' | 'colored', index: number, field: 'size4x4' | 'size10x10' | 'size15x15', value: number) => {
+    const list = [...((target === 'white' ? localConfig.dtgWhitePricing : localConfig.dtgColoredPricing) || [])];
+    list[index] = { ...list[index], [field]: value } as any;
+    if (target === 'white') updateConfig({ dtgWhitePricing: list }); else updateConfig({ dtgColoredPricing: list });
+  };
+
+  const section = (title: string, target: 'white' | 'colored', rows?: any[]) => (
+    <Card className="mt-6">
+      <CardHeader className="pb-2">
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="border rounded-lg overflow-hidden">
+          <div className="grid grid-cols-4 gap-0 bg-muted">
+            <div className="p-3 font-medium">Quantity</div>
+            <div className="p-3 font-medium">4"x4"</div>
+            <div className="p-3 font-medium">10"x10"</div>
+            <div className="p-3 font-medium">15"x15"</div>
+          </div>
+          {(rows || []).map((r, idx) => (
+            <div key={idx} className="grid grid-cols-4 gap-0 border-t">
+              <div className="p-3">{r.quantity}</div>
+              <div className="p-3"><Input type="number" step="0.01" value={r.size4x4} onChange={(e) => updatePriceCell(target, idx, 'size4x4', parseFloat(e.target.value) || 0)} className="h-8" /></div>
+              <div className="p-3"><Input type="number" step="0.01" value={r.size10x10} onChange={(e) => updatePriceCell(target, idx, 'size10x10', parseFloat(e.target.value) || 0)} className="h-8" /></div>
+              <div className="p-3"><Input type="number" step="0.01" value={r.size15x15} onChange={(e) => updatePriceCell(target, idx, 'size15x15', parseFloat(e.target.value) || 0)} className="h-8" /></div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3">
+          <Button variant="outline" size="sm" onClick={() => addQuantityRow(target)}>Add Quantity Range</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4 mb-6">
+        <Button variant="ghost" onClick={onBack}>← Back</Button>
+        <div className="flex items-center gap-3">
+          <Settings2 className="h-6 w-6 text-primary" />
+          <div>
+            <h2 className="text-xl font-semibold">{localConfig.label}</h2>
+            <p className="text-sm text-muted-foreground">Configure your {localConfig.label.toLowerCase()} settings</p>
+          </div>
+          <div className="ml-auto">
+            <Switch checked={localConfig.enabled} onCheckedChange={(enabled) => handleToggleEnabled(localConfig.id, enabled)} />
+            <Label className="ml-2">Active</Label>
+          </div>
+        </div>
+      </div>
+
+      {section('White Garment Pricing (Based on Size)', 'white', localConfig.dtgWhitePricing)}
+      {section('Colored Garment Pricing (Based on Size)', 'colored', localConfig.dtgColoredPricing)}
+
+      {/* DTG Fees */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Fees</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-3 gap-0 bg-muted">
+              <div className="p-3 font-medium">Name</div>
+              <div className="p-3 font-medium">Price</div>
+              <div className="p-3 font-medium">Actions</div>
+            </div>
+            {(localConfig.fees || [ { name: 'Setup', price: 0 } ]).map((fee, idx) => (
+              <div key={idx} className="grid grid-cols-3 gap-0 border-t">
+                <div className="p-3">{fee.name}</div>
+                <div className="p-3"><Input type="number" step="0.01" value={fee.price} onChange={(e) => {
+                  const up = [...(localConfig.fees || [])]; if (!up[idx]) up[idx] = { name: fee.name, price: 0 } as any; up[idx].price = parseFloat(e.target.value) || 0; updateConfig({ fees: up });
+                }} className="h-8" /></div>
+                <div className="p-3"><Button variant="ghost" size="sm" onClick={() => { const up = [...(localConfig.fees || [])]; up.splice(idx, 1); updateConfig({ fees: up }); }}><Trash2 className="h-4 w-4" /></Button></div>
+              </div>
+            ))}
+          </div>
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => updateConfig({ fees: [ ...(localConfig.fees || []), { name: 'New Fee', price: 0 } ] })}>Add Fee</Button>
+        </CardContent>
+      </Card>
+
+      {/* DTG Extra Charges */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Extra Charges</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-3 gap-0 bg-muted">
+              <div className="p-3 font-medium">Name</div>
+              <div className="p-3 font-medium">Price</div>
+              <div className="p-3 font-medium">Actions</div>
+            </div>
+            {(localConfig.extraCharges || [ { name: 'Sleeves', price: 0 }, { name: 'Fleece', price: 0 }, { name: 'Over Zipper', price: 0 }, { name: 'Over Pocket', price: 0 }, { name: 'Neck Label', price: 0 }, { name: 'Kids Shirts', price: 0 } ]).map((ch, idx) => (
+              <div key={idx} className="grid grid-cols-3 gap-0 border-t">
+                <div className="p-3">{ch.name}</div>
+                <div className="p-3"><Input type="number" step="0.01" value={ch.price} onChange={(e) => {
+                  const up = [...(localConfig.extraCharges || [])]; if (!up[idx]) up[idx] = { name: ch.name, price: 0 } as any; up[idx].price = parseFloat(e.target.value) || 0; updateConfig({ extraCharges: up });
+                }} className="h-8" /></div>
+                <div className="p-3"><Button variant="ghost" size="sm" onClick={() => { const up = [...(localConfig.extraCharges || [])]; up.splice(idx, 1); updateConfig({ extraCharges: up }); }}><Trash2 className="h-4 w-4" /></Button></div>
+              </div>
+            ))}
+          </div>
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => updateConfig({ extraCharges: [ ...(localConfig.extraCharges || []), { name: 'New Charge', price: 0 } ] })}>Add Charge</Button>
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center justify-between">
+        <Button variant="outline" onClick={() => onBack()}>Back</Button>
+        <Button onClick={onPersist}>Save Changes</Button>
+      </div>
+    </div>
+  );
+}
+
+function GeneralConfig({ config, onBack, onUpdate, onPersist }: {
+  config: ImprintMethodConfig;
+  onBack: () => void;
+  onUpdate: (config: ImprintMethodConfig) => void;
+  onPersist: () => void;
+}) {
+  const [localConfig, setLocalConfig] = useState(config);
+
+  const updateConfig = (updates: Partial<ImprintMethodConfig>) => {
+    const updated = { ...localConfig, ...updates };
+    setLocalConfig(updated);
+    onUpdate(updated);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4 mb-6">
+        <Button variant="ghost" onClick={onBack}>← Back</Button>
+        <div className="flex items-center gap-3">
+          <Settings2 className="h-6 w-6 text-primary" />
+          <div>
+            <h2 className="text-xl font-semibold">{localConfig.label}</h2>
+            <p className="text-sm text-muted-foreground">Configure your {localConfig.label.toLowerCase()} settings</p>
+          </div>
+          <div className="ml-auto">
+            <Switch checked={localConfig.enabled} onCheckedChange={(enabled) => handleToggleEnabled(localConfig.id, enabled)} />
+            <Label className="ml-2">Active</Label>
+          </div>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>General Information</CardTitle>
+          <CardDescription>Use this method for custom workflows or temporary pricing.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Label className="text-sm">Method Label</Label>
+            <Input value={localConfig.label} onChange={(e) => updateConfig({ label: e.target.value })} />
+          </div>
+          <div>
+            <Label className="text-sm">Notes</Label>
+            <Textarea value={localConfig.colorNotes || ''} onChange={(e) => updateConfig({ colorNotes: e.target.value })} placeholder="Any general notes for this imprint method..." />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center justify-between">
+        <Button variant="outline" onClick={() => onBack()}>Back</Button>
+        <Button onClick={onPersist}>Save Changes</Button>
+      </div>
     </div>
   );
 }

@@ -34,6 +34,7 @@ export interface ImprintJob {
   products: ImprintProduct[];
   totalQuantity: number;
   estimatedHours: number;
+  stageDurations?: Record<string, number>;
   dueDate: Date;
   priority: "low" | "medium" | "high";
   artworkApproved: boolean;

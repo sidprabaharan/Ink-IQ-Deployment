@@ -37,6 +37,28 @@ export function ModernEmailList({
 }: ModernEmailListProps) {
   const [hoveredEmail, setHoveredEmail] = useState<string | null>(null);
 
+  const sanitizePreview = (text: string) => {
+    if (!text) return '';
+    try {
+      // eslint-disable-next-line deprecation/deprecation
+      const decoded = decodeURIComponent(escape(text));
+      const bad = /Ã|Â|â|â€¢|â¢/.test(text);
+      text = bad && !/Ã|Â|â|â€¢|â¢/.test(decoded) ? decoded : text;
+    } catch {}
+    return text
+      .replace(/Â\s?/g, ' ')
+      .replace(/â/g, '—')
+      .replace(/â/g, '–')
+      .replace(/â/g, '’')
+      .replace(/â/g, '‘')
+      .replace(/â/g, '“')
+      .replace(/â/g, '”')
+      .replace(/â¦/g, '…')
+      .replace(/â¢/g, '•')
+      .replace(/â€¢/g, '•')
+      .replace(/\u00A0/g, ' ');
+  };
+
   const handleEmailSelect = (emailId: string) => {
     const isSelected = selectedEmails.includes(emailId);
     if (isSelected) {
@@ -111,7 +133,7 @@ export function ModernEmailList({
               key={email.id}
               className={`group flex items-start gap-3 p-3 mx-2 mb-1 rounded-xl cursor-pointer transition-all hover:bg-white/80 ${
                 selectedEmailId === email.id 
-                  ? 'bg-blue-500 text-white shadow-lg' 
+                  ? 'bg-blue-500 shadow-lg' 
                   : !email.read 
                     ? 'bg-white shadow-sm' 
                     : 'bg-gray-50/50'
@@ -160,7 +182,7 @@ export function ModernEmailList({
                   <span className={`text-xs truncate flex-1 ${
                     selectedEmailId === email.id ? 'text-white/70' : 'text-gray-500'
                   }`}>
-                    {email.content.substring(0, 60)}...
+                    {sanitizePreview(email.content).substring(0, 60)}...
                   </span>
                   
                   <div className="flex items-center gap-1 ml-2">

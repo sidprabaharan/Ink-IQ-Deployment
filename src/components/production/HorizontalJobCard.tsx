@@ -42,6 +42,7 @@ export function HorizontalJobCard({
         isScheduledMove: variant === "scheduled"
       }));
       e.dataTransfer.effectAllowed = "move";
+      // console.debug('[DnD] dragstart card', { jobId: job.id, jobNumber: job.jobNumber, variant });
     }
   };
 

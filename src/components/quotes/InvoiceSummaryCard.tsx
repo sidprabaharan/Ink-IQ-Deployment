@@ -12,13 +12,14 @@ interface InvoiceSummary {
 
 interface InvoiceSummaryCardProps {
   summary: InvoiceSummary;
+  title?: string;
 }
 
-export function InvoiceSummaryCard({ summary }: InvoiceSummaryCardProps) {
+export function InvoiceSummaryCard({ summary, title = "Quote Summary" }: InvoiceSummaryCardProps) {
   return (
     <div className="bg-white p-6 rounded-lg border">
       <div className="bg-blue-100 p-3 rounded-md mb-4">
-        <h3 className="font-medium text-center">Invoice Summary</h3>
+        <h3 className="font-medium text-center">{title}</h3>
       </div>
       <div className="space-y-3">
         <div className="flex justify-between">

@@ -6,6 +6,7 @@ import { useCustomers } from '@/context/CustomersContext';
 import { QuoteItemsTable } from '@/components/quotes/QuoteItemsTable';
 import { QuoteDetailHeader } from '@/components/quotes/QuoteDetailHeader';
 import { CompanyInfoCard } from '@/components/quotes/CompanyInfoCard';
+import { useOrganization } from '@/context/OrganizationContext';
 import { CustomerInfoCard } from '@/components/quotes/CustomerInfoCard';
 import { QuoteDetailsCard } from '@/components/quotes/QuoteDetailsCard';
 import { NotesCard } from '@/components/quotes/NotesCard';
@@ -15,6 +16,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
 export default function InvoiceDetail() {
+  const { organization } = useOrganization();
   const { id } = useParams();
   const { getInvoice, updateInvoiceStatus, recordPayment } = useInvoices();
   const { customers, fetchCustomers } = useCustomers();
@@ -217,14 +219,17 @@ export default function InvoiceDetail() {
   };
 
   // Prepare top tiles similar to quote detail
+  const orgSettings: any = organization?.org_settings || {};
   const companyInfo = {
-    name: "InkIQ Print Solutions",
-    address: "123 Business St",
-    city: "Toronto",
-    province: "ON",
-    postalCode: "M1A 1A1",
-    phone: "(555) 123-4567",
-    email: "info@inkiq.com"
+    name: orgSettings.companyName || organization?.org_name || '',
+    logo: orgSettings.logoUrl || undefined,
+    address: orgSettings.address || '',
+    city: orgSettings.city || '',
+    region: orgSettings.state || '',
+    postalCode: orgSettings.zip || '',
+    phone: orgSettings.phone || '',
+    website: orgSettings.website || '',
+    email: orgSettings.email || ''
   };
 
   const customer = customers.find(c => c.id === data.customer_id);

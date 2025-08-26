@@ -55,6 +55,7 @@ interface ItemImprint {
   customerArt: File[];
   productionFiles: File[];
   proofMockup: File[];
+  stageDurations?: Record<string, number>;
 }
 
 interface QuoteItem {
@@ -89,6 +90,7 @@ interface ItemGroup {
 
 interface QuoteItemsSectionProps {
   quoteData?: any;
+  onItemGroupsChange?: (groups: ItemGroup[]) => void;
 }
 
 export interface QuoteItemsSectionRef {
@@ -109,22 +111,22 @@ const PRODUCT_CATEGORIES = [
 ];
 
 export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSectionProps>(
-  ({ quoteData }, ref) => {
+  ({ quoteData, onItemGroupsChange }, ref) => {
     const [itemGroups, setItemGroups] = useState<ItemGroup[]>([
       {
         id: 'group-1',
         items: [
           {
             id: 'item-1',
-            category: 'T-Shirts',
-            itemNumber: 'ITEM-001',
-            color: 'Black',
-            description: 'Custom T-Shirt',
-            sizes: { xs: 0, s: 0, m: 1, l: 0, xl: 0, xxl: 0, xxxl: 0 },
-            quantity: 1,
-            unitPrice: 20.00,
-            taxed: true,
-            total: 20.00,
+            category: '',
+            itemNumber: '',
+            color: '',
+            description: '',
+            sizes: { xs: 0, s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 },
+            quantity: 0,
+            unitPrice: 0,
+            taxed: false,
+            total: 0,
             mockups: []
           }
         ],
@@ -155,7 +157,8 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
       width: 0,
       height: 0,
       colorsOrThreads: '',
-      notes: ''
+      notes: '',
+      stageDurations: {}
     });
 
     // Debug logging in useEffect to prevent infinite re-renders
@@ -163,22 +166,13 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
     // Production config for method/decoration selection
     const [prodConfig, setProdConfig] = useState<Record<string, { label: string; decorations: { code: string; label: string }[] }>>({});
     useEffect(() => {
-      const loadConfig = async () => {
-        try {
-          const { data, error } = await supabase.rpc('get_production_config');
-          if (!error && Array.isArray(data)) {
-            const mapped: Record<string, { label: string; decorations: { code: string; label: string }[] }> = {} as any;
-            (data as any[]).forEach((m: any) => {
-              mapped[m.method_code] = {
-                label: m.display_name,
-                decorations: (m.decorations || []).map((d: any) => ({ code: d.decoration_code || 'standard', label: d.display_name })),
-              };
-            });
-            setProdConfig(mapped);
-          }
-        } catch {}
+      const defaultCfg: Record<string, { label: string; decorations: { code: string; label: string }[] }> = {
+        screen_printing: { label: 'Screen Printing', decorations: [{ code: 'standard', label: 'Standard' }] },
+        embroidery: { label: 'Embroidery', decorations: [{ code: 'standard', label: 'Standard' }] },
+        dtf: { label: 'DTF', decorations: [{ code: 'standard', label: 'Standard' }] },
+        dtg: { label: 'DTG', decorations: [{ code: 'standard', label: 'Standard' }] },
       };
-      loadConfig();
+      setProdConfig(defaultCfg);
     }, []);
     // Helper to resolve a displayable URL from various shapes (library-signed URLs or File objects)
     const resolveFileUrl = (file: any): string | null => {
@@ -200,10 +194,11 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
       return (file?.name || file?.file_name || fallback) as string;
     };
     
-    // Save to localStorage whenever itemGroups change
+    // Save to localStorage and notify parent whenever itemGroups change
     useEffect(() => {
       updateItemGroupsInDraft(itemGroups);
-    }, [itemGroups]);
+      if (onItemGroupsChange) onItemGroupsChange(itemGroups);
+    }, [itemGroups, onItemGroupsChange]);
 
     // Clear localStorage when starting a new quote (component mounts)
     useEffect(() => {
@@ -380,7 +375,8 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
         itemId: selectedItemId,
         customerArt: uploadedFiles.filter(f => f.type.startsWith('image/')),
         productionFiles: uploadedFiles.filter(f => !f.type.startsWith('image/')),
-        proofMockup: proofMockupFile ? [proofMockupFile] : []
+        proofMockup: proofMockupFile ? [proofMockupFile] : [],
+        stageDurations: imprintData.stageDurations || {}
       };
       console.debug('[QuoteItemsSection] handleImprintSave newImprint', {
         groupId: selectedGroupId,
@@ -435,6 +431,7 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
             customerArt: [...(existing.customerArt || []), ...newImprint.customerArt],
             productionFiles: [...(existing.productionFiles || []), ...newImprint.productionFiles],
             proofMockup: [...(existing.proofMockup || []), ...newImprint.proofMockup],
+            stageDurations: { ...(existing as any).stageDurations, ...(newImprint.stageDurations || {}) }
           } as ItemImprint;
           console.debug('[QuoteItemsSection] handleImprintSave merged imprint', {
             id: existing.id,
@@ -627,40 +624,40 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
           <h3 className="text-lg font-medium">Quote Items</h3>
         </div>
 
-        {/* Quote Items Table */}
-        <div className="border rounded-lg overflow-hidden">
-          <Table>
+        {/* Quote Items Table - minimal chrome, thin separators */}
+        <div className="overflow-x-auto border border-gray-200 rounded-md">
+          <Table className="w-full border-collapse">
           <TableHeader>
-            <TableRow className="bg-gray-50">
-                <TableHead className="font-medium text-gray-900">CATEGORY</TableHead>
-                <TableHead className="font-medium text-gray-900">ITEM#</TableHead>
-                <TableHead className="font-medium text-gray-900">COLOR</TableHead>
-                <TableHead className="font-medium text-gray-900">DESCRIPTION</TableHead>
-                <TableHead className="font-medium text-gray-900 text-center">XS</TableHead>
-                <TableHead className="font-medium text-gray-900 text-center">S</TableHead>
-                <TableHead className="font-medium text-gray-900 text-center">M</TableHead>
-                <TableHead className="font-medium text-gray-900 text-center">L</TableHead>
-                <TableHead className="font-medium text-gray-900 text-center">XL</TableHead>
-                <TableHead className="font-medium text-gray-900 text-center">2XL</TableHead>
-                <TableHead className="font-medium text-gray-900 text-center">3XL</TableHead>
-                <TableHead className="font-medium text-gray-900">PRICE</TableHead>
-                <TableHead className="font-medium text-gray-900 text-center">TAXED</TableHead>
-                <TableHead className="font-medium text-gray-900">TOTAL</TableHead>
-                <TableHead className="font-medium text-gray-900"></TableHead>
+            <TableRow className="border-b divide-x divide-gray-200">
+                <TableHead className="text-xs font-medium text-gray-600 py-2 px-2 w-48">CATEGORY</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 py-2 px-2 w-36">ITEM#</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 py-2 px-2 w-32">COLOR</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 py-2 px-2">DESCRIPTION</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 text-center py-2 px-0 w-10">XS</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 text-center py-2 px-0 w-10">S</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 text-center py-2 px-0 w-10">M</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 text-center py-2 px-0 w-10">L</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 text-center py-2 px-0 w-10">XL</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 text-center py-2 px-0 w-10">2XL</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 text-center py-2 px-0 w-10">3XL</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 py-2 px-2 w-24">PRICE</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 text-center py-2 px-2 w-16">TAXED</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 py-2 px-2 w-28">TOTAL</TableHead>
+                <TableHead className="text-xs font-medium text-gray-600 py-2 px-2 w-10"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
               {itemGroups.map((group) => [
                 // Group Items
                 ...group.items.map((item) => (
-                  <TableRow key={item.id} className="border-b hover:bg-gray-50">
+                  <TableRow key={item.id} className="border-b divide-x divide-gray-200">
                     {/* Category */}
-                    <TableCell>
+                    <TableCell className="p-1">
                       <Select 
                         value={item.category} 
                         onValueChange={(value) => updateItem(group.id, item.id, { category: value })}
                       >
-                        <SelectTrigger className="w-full border-0 shadow-none">
+                        <SelectTrigger className="w-48 h-8 border-0 shadow-none bg-transparent px-0">
                           <SelectValue placeholder="Select" />
                         </SelectTrigger>
                         <SelectContent>
@@ -674,142 +671,111 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     </TableCell>
 
                     {/* Item Number */}
-                    <TableCell>
+                    <TableCell className="p-1">
                       <Input 
                         value={item.itemNumber}
                         onChange={(e) => updateItem(group.id, item.id, { itemNumber: e.target.value })}
                         placeholder="Item #"
-                        className="w-full border-0 shadow-none"
+                        className="w-36 h-8 border-0 shadow-none bg-transparent px-0"
                       />
                     </TableCell>
 
                     {/* Color */}
-                    <TableCell>
+                    <TableCell className="p-1">
                       <Input 
                         value={item.color}
                         onChange={(e) => updateItem(group.id, item.id, { color: e.target.value })}
                         placeholder="Color"
-                        className="w-full border-0 shadow-none"
+                        className="w-32 h-8 border-0 shadow-none bg-transparent px-0"
                       />
                     </TableCell>
 
                     {/* Description */}
-                    <TableCell>
+                    <TableCell className="p-1">
                       <Input
                         value={item.description}
                         onChange={(e) => updateItem(group.id, item.id, { description: e.target.value })}
                         placeholder="Description"
-                        className="w-full border-0 shadow-none"
+                        className="w-full h-8 border-0 shadow-none bg-transparent px-0"
                       />
                     </TableCell>
 
-                    {/* Method / Decoration (inline selectors, compact; no layout change beyond cell content) */}
-                    <TableCell colSpan={1}>
-                      <div className="flex items-center gap-2">
-                        <Select
-                          value={item.imprintMethod || ''}
-                          onValueChange={(value) => updateItem(group.id, item.id, { imprintMethod: value, decorationCode: '' })}
-                        >
-                          <SelectTrigger className="w-40 border-0 shadow-none">
-                            <SelectValue placeholder="Method" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(prodConfig).map(([code, m]) => (
-                              <SelectItem key={code} value={code}>{m.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={item.decorationCode || ''}
-                          onValueChange={(value) => updateItem(group.id, item.id, { decorationCode: value })}
-                          disabled={!item.imprintMethod}
-                        >
-                          <SelectTrigger className="w-44 border-0 shadow-none">
-                            <SelectValue placeholder="Decoration" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {(item.imprintMethod && prodConfig[item.imprintMethod]?.decorations || []).map((d) => (
-                              <SelectItem key={d.code} value={d.code}>{d.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </TableCell>
+                    
 
                     {/* Size Quantities */}
-                    <TableCell>
+                    <TableCell className="p-0">
                       <Input 
                         type="number" 
                         value={item.sizes.xs}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'xs', parseInt(e.target.value) || 0)}
-                        className="w-16 text-center border-0 shadow-none"
+                        className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="p-0">
                       <Input 
                         type="number" 
                         value={item.sizes.s}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 's', parseInt(e.target.value) || 0)}
-                        className="w-16 text-center border-0 shadow-none"
+                        className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="p-0">
                       <Input 
                         type="number" 
                         value={item.sizes.m}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'm', parseInt(e.target.value) || 0)}
-                        className="w-16 text-center border-0 shadow-none"
+                        className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="p-0">
                       <Input 
                         type="number" 
                         value={item.sizes.l}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'l', parseInt(e.target.value) || 0)}
-                        className="w-16 text-center border-0 shadow-none"
+                        className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="p-0">
                       <Input 
                         type="number" 
                         value={item.sizes.xl}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'xl', parseInt(e.target.value) || 0)}
-                        className="w-16 text-center border-0 shadow-none"
+                        className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="p-0">
                       <Input 
                         type="number" 
                         value={item.sizes.xxl}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'xxl', parseInt(e.target.value) || 0)}
-                        className="w-16 text-center border-0 shadow-none"
+                        className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="p-0">
                       <Input 
                         type="number" 
                         value={item.sizes.xxxl}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'xxxl', parseInt(e.target.value) || 0)}
-                        className="w-16 text-center border-0 shadow-none"
+                        className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
                     </TableCell>
 
                     {/* Price */}
-                    <TableCell>
+                    <TableCell className="p-1">
                       <div className="relative">
-                        <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500">$</span>
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                         <Input 
                           type="number"
                           value={item.unitPrice}
                           onChange={(e) => updateItem(group.id, item.id, { unitPrice: parseFloat(e.target.value) || 0 })}
-                          className="w-20 pl-6 border-0 shadow-none"
+                          className="w-24 h-8 pl-6 border-0 shadow-none bg-transparent"
                           min="0"
                           step="0.01"
                         />
@@ -817,21 +783,21 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     </TableCell>
 
                     {/* Taxed */}
-                    <TableCell className="text-center">
+                    <TableCell className="text-center p-1">
                         <Checkbox
                           checked={item.taxed}
-                        onCheckedChange={(checked) => updateItem(group.id, item.id, { taxed: checked as boolean })}
-                        className="mx-auto"
+                          onCheckedChange={(checked) => updateItem(group.id, item.id, { taxed: checked as boolean })}
+                          className="mx-auto"
                         />
                     </TableCell>
 
                     {/* Total */}
-                    <TableCell className="font-medium">
+                    <TableCell className="font-medium p-1">
                       ${item.total.toFixed(2)}
                     </TableCell>
 
                     {/* Actions */}
-                    <TableCell>
+                    <TableCell className="p-1">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -979,6 +945,12 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
           </TableBody>
         </Table>
         </div>
+        {/* Inline validation when all sizes are zero */}
+        {itemGroups.length > 0 && itemGroups.every(g => g.items.every(i => Object.values(i.sizes).every((q) => q === 0))) && (
+          <div className="mt-2 text-sm text-red-600">
+            Please add at least one size quantity greater than 0 before saving.
+          </div>
+        )}
         {/* Removed global imprint list to prevent duplicate rendering. Imprints now render inline per group above. */}
         
         {/* Action Buttons under table: left (Line Item, Imprint), right (Line Item Group) */}
@@ -1113,7 +1085,18 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     </label>
                     <Select 
                       value={imprintData.method} 
-                      onValueChange={(value) => setImprintData(prev => ({ ...prev, method: value }))}
+                      onValueChange={(value) => {
+                        const methodToStages: Record<string, string[]> = {
+                          screen_print: ['burn_screens','mix_ink','print'],
+                          embroidery: ['digitize','hoop','embroider'],
+                          dtf: ['design_file','dtf_print','powder','cure'],
+                          dtg: ['pretreat','dtg_print','dtg_cure'],
+                        };
+                        const stages = methodToStages[value] || [];
+                        const nextDurations: Record<string, number> = {};
+                        stages.forEach(s => { nextDurations[s] = (imprintData.stageDurations as any)?.[s] || 0; });
+                        setImprintData(prev => ({ ...prev, method: value, stageDurations: nextDurations }));
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select Imprint Method" />
@@ -1175,6 +1158,36 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                             </div>
                         </div>
                 
+                {/* Stage Durations */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Stage Durations (hours)</label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {(() => {
+                      const sd = imprintData.stageDurations || {} as Record<string, number>;
+                      const entries = Object.keys(sd);
+                      if (entries.length === 0) return null;
+                      return entries.map((stageKey) => (
+                        <div key={stageKey} className="space-y-1">
+                          <div className="text-xs text-gray-600">{stageKey.replace(/_/g,' ')}</div>
+                          <Input
+                            type="number"
+                            step="0.25"
+                            min="0"
+                            value={sd[stageKey] ?? 0}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value);
+                              setImprintData(prev => ({
+                                ...prev,
+                                stageDurations: { ...(prev.stageDurations || {}), [stageKey]: isNaN(v) ? 0 : v }
+                              }));
+                            }}
+                          />
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+
                 {/* Colors or Threads */}
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-700">

@@ -46,6 +46,9 @@ function NewQuoteContent() {
   const [nickname, setNickname] = useState(isEditMode ? `Edit Quote #${editQuoteId}` : "New Quotation");
   const [leadData, setLeadData] = useState<any>(null);
   const [quoteData, setQuoteData] = useState<QuotationData | null>(null);
+  const [customerNotes, setCustomerNotes] = useState<string>("");
+  const [productionNotes, setProductionNotes] = useState<string>("");
+  const [liveSubtotal, setLiveSubtotal] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(isEditMode);
   const quoteItemsRef = useRef<QuoteItemsSectionRef>(null);
   const [createdQuoteId, setCreatedQuoteId] = useState<string | null>(null);
@@ -61,6 +64,14 @@ function NewQuoteContent() {
       }, 100);
     }
   }, [isEditMode]);
+
+  // Initialize notes if editing or when quoteData loads
+  useEffect(() => {
+    if (quoteData?.notes) {
+      setCustomerNotes(quoteData.notes.customer || "");
+      setProductionNotes(quoteData.notes.production || "");
+    }
+  }, [quoteData]);
   
   
   // State for quote dates
@@ -297,8 +308,8 @@ function NewQuoteContent() {
           tax_rate: 0.08,
           discount_percentage: 0,
           valid_until_days: 30,
-          notes: "Quote created via NewQuote component",
-          terms_conditions: "Standard terms apply",
+          notes: customerNotes || undefined,
+          terms_conditions: productionNotes || undefined,
           production_due_date: quoteDates.productionDueDate ? new Date(quoteDates.productionDueDate) : undefined,
           customer_due_date: quoteDates.customerDueDate ? new Date(quoteDates.customerDueDate) : undefined,
           payment_due_date: quoteDates.paymentDueDate ? new Date(quoteDates.paymentDueDate) : undefined,
@@ -411,7 +422,8 @@ function NewQuoteContent() {
                 width: imprint.width,
                 height: imprint.height,
                 colors_or_threads: imprint.colorsOrThreads,
-                notes: imprint.notes
+                notes: imprint.notes,
+                stage_durations: (imprint as any).stageDurations || {}
               })
               .select('*')
               .single();
@@ -540,8 +552,8 @@ function NewQuoteContent() {
                 <QuotationDetailsSection quoteData={quoteData} onDatesChange={handleDatesChange} />
                   <NickNameSection value={nickname} onChange={handleNicknameChange} />
                   <div className="space-y-4">
-                    <NotesSection title="Customer Notes" initialValue={quoteData?.notes.customer} />
-                    <NotesSection title="Production Note" initialValue={quoteData?.notes.production} />
+                    <NotesSection title="Customer Notes" value={customerNotes} onChange={setCustomerNotes} />
+                    <NotesSection title="Production Note" value={productionNotes} onChange={setProductionNotes} />
                   </div>
                 </div>
               </div>
@@ -551,12 +563,17 @@ function NewQuoteContent() {
                 <QuoteItemsSection 
                   quoteData={quoteData} 
                   ref={quoteItemsRef}
+                  onItemGroupsChange={(groups) => {
+                    // Recompute subtotal live from items
+                    const subtotal = groups.reduce((sum, g) => sum + g.items.reduce((acc, it) => acc + (it.total || 0), 0), 0);
+                    setLiveSubtotal(subtotal);
+                  }}
                 />
               </div>
               
               {/* Invoice Summary Section - Full Width but with right alignment */}
               <div className="mt-6 md:w-1/3 md:ml-auto">
-                <InvoiceSummarySection quoteData={quoteData} />
+                <InvoiceSummarySection quoteData={{ invoiceSummary: { subTotal: liveSubtotal } }} />
               </div>
             </>
           )}

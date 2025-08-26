@@ -17,6 +17,7 @@ export interface ImprintItem {
   customerArt: ImprintFile[];
   productionFiles: ImprintFile[];
   proofMockup: ImprintFile[];
+  stageDurations?: Record<string, number>;
 }
 
 export interface ImprintMethod {
@@ -36,6 +37,14 @@ export const IMPRINT_METHODS: ImprintMethod[] = [
     productionFileTypes: ["ai", "eps", "pdf", "psd", "zip"],
     instructions: "Vector spot colors or PSD with spot-color channels. Include underbase if needed.",
     requirements: ["Vector files preferred", "Spot color separations", "Include underbase for dark garments"]
+  },
+  {
+    value: "general",
+    label: "General",
+    customerArtTypes: ["jpg", "png", "pdf"],
+    productionFileTypes: ["pdf", "zip"],
+    instructions: "Generic imprint method for custom workflows.",
+    requirements: ["Provide final artwork", "Specify sizing and placement"]
   },
   {
     value: "embroidery",

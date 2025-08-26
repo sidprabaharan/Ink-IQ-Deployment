@@ -47,12 +47,12 @@ export default function Settings() {
     { id: 'automations', name: 'Automations', icon: Workflow, component: Automations },
     { id: 'tasks', name: 'Preset Tasks', icon: ClipboardList, component: PresetTasks },
     { id: 'email', name: 'Email Integration', icon: Mail, component: EmailIntegration },
-    { id: 'data', name: 'Import/Export Data', icon: DownloadCloud, component: DataManagement },
-    { id: 'shipping', name: 'Shipping Integration', icon: Truck, component: ShippingIntegration },
+    // { id: 'data', name: 'Import/Export Data', icon: DownloadCloud, component: DataManagement }, // hidden
+    // { id: 'shipping', name: 'Shipping Integration', icon: Truck, component: ShippingIntegration }, // hidden
     { id: 'suppliers', name: 'Supplier Integrations', icon: Package2, component: SupplierIntegrations },
-    { id: 'outsourcing', name: 'Outsourcing', icon: Workflow, component: () => <OutsourcingPreferences onSave={(prefs) => console.log(prefs)} /> },
-    { id: 'quickbooks', name: 'QuickBooks', icon: FileSpreadsheet, component: QuickbooksIntegration },
-    { id: 'zapier', name: 'Zapier Integration', icon: Zap, component: ZapierIntegration },
+    // { id: 'outsourcing', name: 'Outsourcing', icon: Workflow, component: () => <OutsourcingPreferences onSave={(prefs) => console.log(prefs)} /> }, // hidden
+    // { id: 'quickbooks', name: 'QuickBooks', icon: FileSpreadsheet, component: QuickbooksIntegration }, // hidden
+    // { id: 'zapier', name: 'Zapier Integration', icon: Zap, component: ZapierIntegration }, // hidden
     { id: 'billing', name: 'Billing & Subscription', icon: BillingIcon, component: Billing },
     { id: 'general', name: 'General Settings', icon: SettingsIcon, component: GeneralSettings },
   ];

@@ -6,7 +6,6 @@ import { UnscheduledJobsPanel } from "./UnscheduledJobsPanel";
 import { SchedulingGrid } from "./SchedulingGrid";
 import { JobDetailModal } from "./JobDetailModal";
 import { ImprintJob } from "@/types/imprint-job";
-import { convertOrderBreakdownToImprintJobs } from "@/utils/imprintJobUtils";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { getAvailableStages, isJobReadyForStage } from "@/utils/stageDependencyUtils";
@@ -15,7 +14,7 @@ import { track } from "@/lib/utils";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useAuth } from "@/context/AuthContext";
 
-export type DecorationMethod = "screen_printing" | "embroidery" | "dtf" | "dtg";
+export type DecorationMethod = "screen_printing" | "embroidery" | "dtf" | "dtg" | string;
 
 export type ProductionStage = 
   | "burn_screens" | "mix_ink" | "print" // Screen printing stages
@@ -35,7 +34,7 @@ export interface PrintavoJob extends ImprintJob {
 }
 
 export default function PrintavoPowerScheduler() {
-  const [selectedMethod, setSelectedMethod] = useState<DecorationMethod>("screen_printing");
+  const [selectedMethod, setSelectedMethod] = useState<string>("screen_printing");
   const [selectedStage, setSelectedStage] = useState<ProductionStage>("burn_screens");
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [selectedJob, setSelectedJob] = useState<ImprintJob | null>(null);
@@ -44,33 +43,134 @@ export default function PrintavoPowerScheduler() {
   const [selectedDecoration, setSelectedDecoration] = useState<string>('all');
   
   // Config loaded from backend
-  const [stagesByMethod, setStagesByMethod] = useState<Record<DecorationMethod, Array<{ id: string; name: string; color: string }>>>({
+  const [stagesByMethod, setStagesByMethod] = useState<Record<string, Array<{ id: string; name: string; color: string }>>>({
     screen_printing: [],
     embroidery: [],
     dtf: [],
     dtg: [],
   });
+  const [methodOptions, setMethodOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const normalizeMethodId = (id: string) => (id || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/\s+/g, '_')
+    .replace(/-/g, '_')
+    .toLowerCase();
 
-  // Jobs state
-  const [jobs, setJobs] = useState<ImprintJob[]>(convertOrderBreakdownToImprintJobs());
-  const { toast } = useToast();
+  // Context and toast (must be declared before effects that use them)
   const { organization } = useOrganization();
   const { user } = useAuth();
+  const { toast } = useToast();
+
+  // Prefer organization context for methods/stages when available
+  useEffect(() => {
+    const s: any = organization?.org_settings || {};
+    const configured = s.production?.decorationMethods as Array<{ id: string; label?: string; enabled?: boolean; stages?: Array<{ id: string; name: string }> }> | undefined;
+    const equipmentFromOrg = s.production?.equipment as Array<any> | undefined;
+    if (!configured || !configured.length) return;
+    const opts = configured
+      .filter(m => m.enabled !== false)
+      .map(m => ({ value: normalizeMethodId(m.id || ''), label: m.label || m.id }));
+    setMethodOptions(opts);
+    if (opts.length && !opts.find(o => o.value === selectedMethod)) {
+      setSelectedMethod(opts[0].value);
+    }
+    const colors = [
+      'bg-orange-100 text-orange-800','bg-purple-100 text-purple-800','bg-green-100 text-green-800','bg-blue-100 text-blue-800','bg-yellow-100 text-yellow-800','bg-indigo-100 text-indigo-800','bg-pink-100 text-pink-800','bg-amber-100 text-amber-800'
+    ];
+    const nextLocal: Record<string, Array<{ id: string; name: string; color: string }>> = {};
+    configured.filter(m => m.enabled !== false).forEach((m) => {
+      const key = normalizeMethodId(m.id || '');
+      const stages = Array.isArray(m.stages) && m.stages.length
+        ? m.stages.map((st, idx) => ({ id: st.id, name: st.name, color: colors[idx % colors.length] }))
+        : [];
+      nextLocal[key] = stages;
+    });
+    if (Object.keys(nextLocal).length) {
+      setStagesByMethod(prev => ({ ...prev, ...nextLocal }));
+    }
+    // If org has equipment, we could enrich in future; lanes are still mapped heuristically per stage
+    console.debug('[Production] org ctx applied', { opts, nextLocal });
+  }, [organization]);
+
+  // Ensure selectedStage is valid whenever stages or method change
+  useEffect(() => {
+    const list = stagesByMethod[selectedMethod] || [];
+    if (!list.find(s => s.id === selectedStage)) {
+      const next = list[0]?.id as ProductionStage | undefined;
+      if (next) setSelectedStage(next);
+    }
+  }, [stagesByMethod, selectedMethod]);
+
+  // Jobs state
+  const [jobs, setJobs] = useState<ImprintJob[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const pendingOpsRef = useRef<Set<string>>(new Set());
+  const lastAutoKeyRef = useRef<string>("");
   const role = (organization?.user_role || '').toLowerCase();
   const isManager = ['production_manager', 'manager', 'admin', 'owner'].includes(role);
   const isOperator = ['operator'].includes(role);
-  const canOperateBase = isManager || isOperator; // can move stages/change statuses
-  const canScheduleHere = isManager || isOperator; // CSR can schedule from Quotes, not here
+  // Permissions relaxed: allow all users to operate and schedule from Scheduler
+  const canOperateBase = true;
+  const canScheduleHere = true;
   const isAssigned = (job?: ImprintJob) => !!(job && user && job.assignedUserId && job.assignedUserId === user.id);
-  const canOperate = (job?: ImprintJob) => isManager || (isOperator && isAssigned(job));
+  const canOperate = (_job?: ImprintJob) => true;
 
   // Load config and jobs from Supabase (without altering visual behavior)
   useEffect(() => {
     const load = async () => {
       try {
         setLoading(true);
+        // Load organization methods if configured in settings
+        try {
+          // Load methods from org settings without importing OrganizationContext twice
+          const orgRes = await supabase.rpc('get_user_org_info');
+          console.debug('[Production] get_user_org_info', { error: orgRes.error, rows: Array.isArray(orgRes.data) ? orgRes.data.length : null, sample: Array.isArray(orgRes.data) ? orgRes.data[0] : null });
+          const row = Array.isArray(orgRes.data) ? orgRes.data[0] : null;
+          const s: any = row?.org_settings || {};
+          const configured = s.production?.decorationMethods as Array<{ id: string; label: string; enabled: boolean; stages?: any[] }> | undefined;
+          console.debug('[Production] org_settings.production.decorationMethods', configured);
+          if (configured && configured.length) {
+            const opts = configured
+              .filter(m => m.enabled !== false)
+              .map(m => ({ value: normalizeMethodId(m.id || ''), label: m.label || m.id }));
+            console.debug('[Production] methodOptions computed from settings', opts);
+            if (opts.length) {
+              setMethodOptions(opts);
+              // If current selection not present, default to first configured method
+              if (!opts.find(o => o.value === selectedMethod)) {
+                const nextMethod = opts[0].value;
+                setSelectedMethod(nextMethod);
+                console.debug('[Production] defaulting selectedMethod to first option', nextMethod);
+              }
+            }
+          }
+        } catch {}
+
+        // If methods configured in org settings, build stages from settings when available
+        if (methodOptions.length) {
+          try {
+            const orgRes2 = await supabase.rpc('get_user_org_info');
+            const row2 = Array.isArray(orgRes2.data) ? orgRes2.data[0] : null;
+            const s2: any = row2?.org_settings || {};
+            const configured2 = s2.production?.decorationMethods as Array<{ id: string; label: string; enabled: boolean; stages?: Array<{ id: string; name: string }> }> | undefined;
+            if (configured2 && configured2.length) {
+              const colors = [
+                'bg-orange-100 text-orange-800','bg-purple-100 text-purple-800','bg-green-100 text-green-800','bg-blue-100 text-blue-800','bg-yellow-100 text-yellow-800','bg-indigo-100 text-indigo-800','bg-pink-100 text-pink-800','bg-amber-100 text-amber-800'
+              ];
+              const nextLocal: Record<string, Array<{ id: string; name: string; color: string }>> = {};
+              configured2.filter(m => m.enabled !== false).forEach((m) => {
+                const key = normalizeMethodId(m.id || '');
+                const stages = Array.isArray(m.stages) && m.stages.length
+                  ? m.stages.map((st, idx) => ({ id: st.id, name: st.name, color: colors[idx % colors.length] }))
+                  : [];
+                nextLocal[key] = stages;
+              });
+              setStagesByMethod(prev => ({ ...prev, ...nextLocal }));
+              console.debug('[Production] stagesByMethod merged from settings', nextLocal);
+            }
+          } catch {}
+        }
+
         // Load config
         const cfg = await supabase.rpc('get_production_config');
         console.debug('[Scheduler] get_production_config result', { error: cfg.error, rows: Array.isArray(cfg.data) ? cfg.data.length : 0, sample: Array.isArray(cfg.data) ? cfg.data.slice(0, 2) : null });
@@ -93,7 +193,7 @@ export default function PrintavoPowerScheduler() {
             'bg-cyan-100 text-cyan-800',
             'bg-emerald-100 text-emerald-800',
           ];
-          const next: Record<DecorationMethod, Array<{ id: string; name: string; color: string }>> = {
+          const next: Record<string, Array<{ id: string; name: string; color: string }>> = {
             screen_printing: [], embroidery: [], dtf: [], dtg: [],
           };
           (cfg.data as any[]).forEach((m: any) => {
@@ -103,10 +203,11 @@ export default function PrintavoPowerScheduler() {
             next[key] = decos.map((s: any, idx: number) => ({ id: s.stage_code, name: s.display_name, color: colors[idx % colors.length] }));
           });
           console.debug('[Scheduler] stagesByMethod computed', next);
-          setStagesByMethod(next);
+          // Merge RPC config under any existing org-settings stages (org settings take precedence)
+          setStagesByMethod((prev) => ({ ...next, ...prev }));
         } else {
           // Fallback default stages when RPC fails
-          const defaults: Record<DecorationMethod, Array<{ id: string; name: string; color: string }>> = {
+          const defaults: Record<string, Array<{ id: string; name: string; color: string }>> = {
     screen_printing: [
               { id: 'burn_screens', name: 'Burn Screens', color: 'bg-orange-100 text-orange-800' },
               { id: 'mix_ink', name: 'Mix Ink', color: 'bg-purple-100 text-purple-800' },
@@ -130,7 +231,8 @@ export default function PrintavoPowerScheduler() {
             ],
           };
           console.debug('[Scheduler] stagesByMethod fallback defaults');
-          setStagesByMethod(defaults);
+          // Merge defaults under any existing org-settings stages
+          setStagesByMethod((prev) => ({ ...defaults, ...prev }));
         }
 
         const methodMap: Record<string, DecorationMethod> = {
@@ -157,6 +259,8 @@ export default function PrintavoPowerScheduler() {
             rawStatus === 'in_progress' || rawStatus === 'in-progress' ? 'in_progress' :
             rawStatus === 'blocked' ? 'blocked' :
             rawStatus === 'done' || rawStatus === 'completed' ? 'done' : 'unscheduled';
+          const stageDurations = (j.stage_durations as any) || {};
+          const sumStageHours = Object.values(stageDurations || {}).reduce((acc: number, v: any) => acc + (Number(v || 0) || 0), 0);
           return {
           id: j.id,
           jobNumber: j.job_number,
@@ -173,14 +277,16 @@ export default function PrintavoPowerScheduler() {
           files: [],
           products: [],
           totalQuantity: j.total_quantity || 0,
-          estimatedHours: Number(j.estimated_hours || 0),
+          estimatedHours: Number(j.estimated_hours || sumStageHours || 0),
+          stageDurations: stageDurations,
           dueDate: j.due_date ? new Date(j.due_date) : new Date(),
           priority: (j.priority as any) || 'medium',
           artworkApproved: true,
           currentStage: (j.current_stage as any),
           equipmentId: j.equipment_id || undefined,
-          scheduledStart: j.scheduled_start ? new Date(j.scheduled_start) : undefined,
-          scheduledEnd: j.scheduled_end ? new Date(j.scheduled_end) : undefined,
+          // use per-stage schedule if provided by rpc; fallback to legacy
+          scheduledStart: j.stage_scheduled_start ? new Date(j.stage_scheduled_start) : (j.scheduled_start ? new Date(j.scheduled_start) : undefined),
+          scheduledEnd: j.stage_scheduled_end ? new Date(j.stage_scheduled_end) : (j.scheduled_end ? new Date(j.scheduled_end) : undefined),
           setupRequired: true,
           mockupImage: j.mockup_image_path ? (supabase.storage.from('artwork').getPublicUrl(j.mockup_image_path).data.publicUrl) : undefined,
           imprintLogo: j.imprint_logo_path ? (supabase.storage.from('artwork').getPublicUrl(j.imprint_logo_path).data.publicUrl) : undefined,
@@ -200,7 +306,7 @@ export default function PrintavoPowerScheduler() {
               { data: imRows, error: imErr },
             ] = await Promise.all([
               supabase.from('quote_items')
-                .select('id, product_name, product_description, product_sku, color, quantity, xs, s, m, l, xl, xxl, xxxl')
+                .select('id, product_name, product_description, product_sku, color, quantity, garment_status, xs, s, m, l, xl, xxl, xxxl')
                 .in('id', qiIds),
               supabase.from('artwork_files')
                 .select('id, quote_item_id, file_name, file_path, file_type, category')
@@ -229,6 +335,13 @@ export default function PrintavoPowerScheduler() {
                 });
               }
               const sign = async (path: string) => {
+                const mode = import.meta.env.VITE_ASSETS_MODE;
+                if (mode === 'local') {
+                  try {
+                    const { getAssetUrl } = await import('@/lib/utils');
+                    return await getAssetUrl(path);
+                  } catch { return undefined; }
+                }
                 try {
                   const { data } = await supabase.storage.from('artwork').createSignedUrl(path, 3600);
                   return data?.signedUrl as string | undefined;
@@ -246,6 +359,14 @@ export default function PrintavoPowerScheduler() {
                     quantity: qi.quantity || 0,
                     status: 'In Production'
                   }];
+                  // Derive a simple material status from quote item garment_status
+                  const rawGs = (qi as any).garment_status ? String((qi as any).garment_status).toLowerCase() : '';
+                  const normalizedGs = rawGs.includes('receive') || rawGs.includes('ready') || rawGs.includes('in_stock') ? 'ready'
+                    : rawGs.includes('backorder') || rawGs.includes('back-ordered') ? 'backorder'
+                    : rawGs.includes('out') ? 'out_of_stock'
+                    : rawGs.includes('low') ? 'low_stock'
+                    : rawGs || '';
+                  (m as any).materialStatus = normalizedGs;
                   m.sizeBreakdown = {
                     [qi.id]: {
                       S: qi.s || 0,
@@ -326,55 +447,184 @@ export default function PrintavoPowerScheduler() {
           return acc;
         }, {} as any);
         console.debug('[Scheduler] mapped jobs summary', { countsByMethod, countsByStatus, ids: mapped.slice(0, 5).map(m => ({ id: m.id, quote_item_id: m.lineItemGroupId, status: m.status, method: m.decorationMethod })) });
-        // Prepend loaded jobs to preserve current visuals; do not remove demo data yet
-        setJobs((prev) => {
-          const existingIds = new Set(prev.map(p => p.id));
-          const merged = [...mapped.filter(m => !existingIds.has(m.id)), ...prev];
-          console.debug('[Scheduler] mapped jobs merged', { incoming: mapped.length, preExisting: prev.length, merged: merged.length });
-          return merged;
-        });
+        // Replace any demo data with live jobs only
+        setJobs(mapped);
       } catch {}
       finally { setLoading(false); }
+        console.debug('[Production] final methodOptions', methodOptions, 'selectedMethod', selectedMethod, 'stagesByMethod keys', Object.keys(stagesByMethod));
     };
     load();
   }, []);
 
+  // Reload stage-specific schedules whenever stage changes
+  useEffect(() => {
+    const loadForStage = async () => {
+      try {
+        console.debug('[Stage] loading jobs for stage', { selectedStage });
+        const { data, error } = await supabase.rpc('get_production_jobs', { p_method: null, p_stage: selectedStage });
+        if (error) {
+          console.warn('[Stage] get_production_jobs error', error);
+          return;
+        }
+        if (!Array.isArray(data)) {
+          console.debug('[Stage] get_production_jobs non-array', data);
+          return;
+        }
+        console.debug('[Stage] get_production_jobs rows', { count: data.length, sample: data.slice(0,2) });
+        const methodMap: Record<string, DecorationMethod> = {
+          screen_printing: 'screen_printing', embroidery: 'embroidery', dtf: 'dtf', dtg: 'dtg'
+        };
+        const mapped: ImprintJob[] = (data as any[]).map((j) => {
+          const rawStatus = (j.status ?? 'unscheduled').toString().toLowerCase();
+          const normalizedStatus =
+            rawStatus === 'unscheduled' ? 'unscheduled' :
+            rawStatus === 'scheduled' ? 'scheduled' :
+            rawStatus === 'in_progress' || rawStatus === 'in-progress' ? 'in_progress' :
+            rawStatus === 'blocked' ? 'blocked' :
+            rawStatus === 'done' || rawStatus === 'completed' ? 'done' : 'unscheduled';
+          const stageDurations = (j.stage_durations as any) || {};
+          const sumStageHours = Object.values(stageDurations || {}).reduce((acc: number, v: any) => acc + (Number(v || 0) || 0), 0);
+          return {
+            id: j.id,
+            jobNumber: j.job_number,
+            orderId: j.quote_id,
+            lineItemGroupId: j.quote_item_id || '',
+            imprintSectionId: j.imprint_id || '',
+            status: normalizedStatus as any,
+            customerName: j.customer_name || 'Customer',
+            description: j.description || '',
+            decorationMethod: methodMap[j.decoration_method] || 'screen_printing',
+            placement: j.placement || '',
+            size: j.size || '',
+            colours: j.colours || '',
+            files: [],
+            products: [],
+            totalQuantity: j.total_quantity || 0,
+            estimatedHours: Number(j.estimated_hours || sumStageHours || 0),
+            stageDurations: stageDurations,
+            dueDate: j.due_date ? new Date(j.due_date) : new Date(),
+            priority: (j.priority as any) || 'medium',
+            artworkApproved: true,
+            currentStage: (j.current_stage as any) || selectedStage,
+            equipmentId: j.stage_equipment_id || j.equipment_id || undefined,
+            // IMPORTANT: for stage-focused reloads, use only per-stage values; do NOT fallback to legacy here
+            scheduledStart: j.stage_scheduled_start ? new Date(j.stage_scheduled_start) : undefined,
+            scheduledEnd: j.stage_scheduled_end ? new Date(j.stage_scheduled_end) : undefined,
+            setupRequired: true,
+            assignedUserId: j.assigned_user_id || undefined,
+            jobCreatedAt: undefined,
+            quoteLastUpdatedAt: j.quote_updated_at ? new Date(j.quote_updated_at) : undefined,
+          } as ImprintJob;
+        });
+        setJobs(prev => {
+          const byId = new Map<string, ImprintJob>();
+          prev.forEach(p => byId.set(p.id, p));
+          mapped.forEach(m => {
+            const existing = byId.get(m.id);
+            byId.set(m.id, existing ? { ...existing, scheduledStart: m.scheduledStart, scheduledEnd: m.scheduledEnd, equipmentId: m.equipmentId } : m);
+          });
+          const merged = Array.from(byId.values());
+          console.debug('[Stage] merged into state', { merged: merged.length });
+          return merged;
+        });
+      } catch (e) {
+        console.warn('[Stage] load error', e);
+      }
+    };
+    loadForStage();
+  }, [selectedStage]);
+
   // Update selected stage when method changes
-  const handleMethodChange = (method: DecorationMethod) => {
+  const handleMethodChange = (method: string) => {
     setSelectedMethod(method);
-    const firstStage = stagesByMethod[method][0];
-    setSelectedStage(firstStage.id as ProductionStage);
+    const list = stagesByMethod[method] || [];
+    let nextStage = list[0]?.id as ProductionStage | undefined;
+    if (!nextStage) {
+      // Fallback sensible defaults per method
+      if (method === 'screen_printing') nextStage = 'burn_screens' as ProductionStage;
+      else if (method === 'dtf') nextStage = 'design_file' as ProductionStage;
+      else if (method === 'dtg') nextStage = 'pretreat' as ProductionStage;
+    }
+    if (nextStage) setSelectedStage(nextStage);
   };
 
-  // Filter jobs by selected method and stage
-  const filteredJobs = jobs.filter(job => 
+  // Filter by method/decoration first; stage-specific filtering applied only to scheduled jobs below
+  const methodFiltered = jobs.filter(job => 
     job.decorationMethod === selectedMethod && 
-    (selectedDecoration === 'all' || (job as any).decoration_code === selectedDecoration) &&
-    (!job.currentStage || job.currentStage === selectedStage)
+    (selectedDecoration === 'all' || (job as any).decoration_code === selectedDecoration)
   );
-  const filterDiagnostics = (() => {
-    let byMethod = 0, byDecoration = 0, byStage = 0;
-    jobs.forEach(job => {
-      if (job.decorationMethod !== selectedMethod) {
-        byMethod++;
-        return;
-      }
-      if (!(selectedDecoration === 'all' || (job as any).decoration_code === selectedDecoration)) {
-        byDecoration++;
-        return;
-      }
-      if (!!job.currentStage && job.currentStage !== selectedStage) {
-        byStage++;
-        return;
-      }
-    });
-    return { byMethod, byDecoration, byStage };
-  })();
-  console.debug('[Scheduler] filter', { selectedMethod, selectedStage, selectedDecoration, totalJobs: jobs.length, filtered: filteredJobs.length, dropped: filterDiagnostics });
+  // Minimal status log
+  const dndEligible = methodFiltered.filter(j => j.status === 'unscheduled');
+  console.debug('[DnD] eligible unscheduled for drag', { count: dndEligible.length, sample: dndEligible.slice(0,3).map(j => ({ id: j.id, num: j.jobNumber })) });
   
-  const unscheduledJobs = filteredJobs.filter(job => job.status === "unscheduled");
-  const scheduledJobs = filteredJobs.filter(job => job.status === "scheduled" || job.status === "in_progress");
+  // Stage-aware lists: unscheduled = not scheduled for this selected stage (regardless of global status)
+  const isScheduledForSelectedStage = (j: ImprintJob) => !!j.scheduledStart;
+  const unscheduledJobs = methodFiltered.filter(job => !isScheduledForSelectedStage(job));
+  // Board view: only show jobs that have a schedule for the selected stage
+  const scheduledJobs = methodFiltered.filter(job => isScheduledForSelectedStage(job));
+  // Compact partition log for debugging only
+  // console.debug('[Stage] partition', { stage: selectedStage, mf: methodFiltered.map(j => ({ id: j.id, ss: !!j.scheduledStart })), un: unscheduledJobs.map(j => j.id), sc: scheduledJobs.map(j => j.id) });
   const terminalStageId = (stagesByMethod[selectedMethod]?.[stagesByMethod[selectedMethod].length - 1]?.id || undefined) as ProductionStage | undefined;
+  
+  // Auto-scheduling (basic): place a few eligible unscheduled jobs into the earliest slot when enabled
+  useEffect(() => {
+    try {
+      const rules: any = (organization?.org_settings as any)?.production?.productionRules || {};
+      if (!rules?.autoScheduling) return;
+      const key = `${selectedMethod}|${selectedStage}|${selectedDate.toDateString()}|${organization?.org_id || 'org'}`;
+      if (lastAutoKeyRef.current === key) return;
+      // Compute eligible unscheduled jobs for this stage
+      const toStage = selectedStage;
+      const eligible = unscheduledJobs.filter(j => {
+        try { return isJobReadyForStage(j as any, jobs).includes(toStage); } catch { return true; }
+      });
+      if (!eligible.length) return;
+      // Find matching equipment lanes from org settings
+      const orgEq = ((organization as any)?.org_settings?.production?.equipment as Array<any>) || [];
+      const normId = (id: string) => normalizeMethodId(id || '');
+      const lanes = orgEq
+        .filter(eq => Array.isArray(eq?.stageAssignments) && eq.stageAssignments.some((sa: any) => normId(sa?.decorationMethod || '') === selectedMethod && Array.isArray(sa?.stageIds) && sa.stageIds.includes(selectedStage as string)))
+        .map(eq => String(eq.id));
+      if (!lanes.length) return; // require explicit lanes for predictability
+      const equipmentId = lanes[0];
+      // Determine buffer from batching rules
+      const methodKeyCamel = selectedMethod === 'screen_printing' ? 'screenPrinting' : selectedMethod;
+      const bufferMin = Number((rules?.batchingRules?.[methodKeyCamel]?.bufferTime) || 0);
+      // Determine day window start
+      const base = new Date(selectedDate);
+      base.setHours(9, 0, 0, 0);
+      const today = new Date();
+      let startCursor = base;
+      if (base.toDateString() === today.toDateString()) {
+        startCursor = new Date(Math.max(base.getTime(), Date.now()));
+      }
+      // Find last scheduled end on that equipment for the day
+      const sameDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const dayKey = sameDay(startCursor);
+      const eqJobs = jobs
+        .filter(j => j.equipmentId === equipmentId && j.scheduledStart && sameDay(new Date(j.scheduledStart)) === dayKey)
+        .sort((a, b) => new Date(a.scheduledEnd || a.scheduledStart as any).getTime() - new Date(b.scheduledEnd || b.scheduledStart as any).getTime());
+      if (eqJobs.length) {
+        const last = eqJobs[eqJobs.length - 1];
+        const lastEnd = new Date((last.scheduledEnd || last.scheduledStart) as any).getTime();
+        startCursor = new Date(Math.max(startCursor.getTime(), lastEnd + bufferMin * 60000));
+      }
+      // Schedule up to 3 jobs
+      const take = eligible.slice(0, 3);
+      take.forEach((job) => {
+        if (pendingOpsRef.current.has(job.id)) return;
+        const stageHours = (job as any).stageDurations && toStage ? Number((job as any).stageDurations[toStage] || 0) : 0;
+        const hoursToUse = stageHours || job.estimatedHours || 1;
+        const start = new Date(startCursor);
+        const end = new Date(start.getTime() + Math.round(hoursToUse * 60) * 60000);
+        // Advance cursor with buffer for the next job
+        startCursor = new Date(end.getTime() + bufferMin * 60000);
+        // Delegate to existing scheduler which applies all validations and persistence
+        handleJobSchedule(job.id, equipmentId, start, end);
+      });
+      lastAutoKeyRef.current = key;
+    } catch {}
+  }, [organization, jobs, selectedMethod, selectedStage, selectedDate]);
   
   const logAudit = async (jobId: string, action: string, details: Record<string, any>) => {
     try {
@@ -391,14 +641,15 @@ export default function PrintavoPowerScheduler() {
   };
 
   const handleJobSchedule = async (jobId: string, equipmentId: string, startTime: Date, endTime: Date) => {
-    if (!canScheduleHere) {
-      toast({ title: 'Not allowed', description: 'Your role cannot schedule from the Scheduler. Use Quotes to schedule.', variant: 'destructive' });
-      return;
-    }
+    // Permissions relaxed: allow scheduling from here
     if (pendingOpsRef.current.has(jobId)) return;
     pendingOpsRef.current.add(jobId);
     const job = jobs.find(j => j.id === jobId);
-    if (!job) return;
+    if (!job) {
+      console.warn('[DnD] handleJobSchedule: job not found in state', { jobId, equipmentId });
+      pendingOpsRef.current.delete(jobId);
+      return;
+    }
 
     if (job.status === 'blocked' || job.status === 'done' || job.status === 'completed') {
       toast({ title: 'Cannot schedule', description: 'Job is blocked or completed. Reopen it first.', variant: 'destructive' });
@@ -417,9 +668,261 @@ export default function PrintavoPowerScheduler() {
       }
     }
 
+    const stageHours = (job as any).stageDurations && toStage ? Number((job as any).stageDurations[toStage] || 0) : 0;
+    const hoursToUse = stageHours || job.estimatedHours || 1;
+    // Enforce Production Rules → Batching & Material rules
+    try {
+      const rules: any = (organization?.org_settings as any)?.production?.productionRules || {};
+      const methodKeyCamel = selectedMethod === 'screen_printing'
+        ? 'screenPrinting'
+        : selectedMethod;
+      const br = (rules?.batchingRules || {})[methodKeyCamel] || {};
+      const minBatch = Number(br.minBatchSize || 0);
+      const maxBatch = Number(br.maxBatchSize || 0);
+      const bufferMin = Number(br.bufferTime || 0);
+      if (minBatch > 0 && Number(job.totalQuantity || 0) < minBatch) {
+        toast({ variant: 'destructive', title: 'Batch too small', description: `Minimum batch for ${methodKeyCamel} is ${minBatch}.` });
+        pendingOpsRef.current.delete(jobId);
+        return;
+      }
+      if (maxBatch > 0 && Number(job.totalQuantity || 0) > maxBatch) {
+        toast({ variant: 'destructive', title: 'Batch too large', description: `Maximum batch for ${methodKeyCamel} is ${maxBatch}.` });
+        pendingOpsRef.current.delete(jobId);
+        return;
+      }
+      if (bufferMin > 0) {
+        // Ensure no job scheduled on this equipment within buffer window around start/end
+        const bufferMs = bufferMin * 60000;
+        const startWithBuf = new Date(startTime.getTime() - bufferMs);
+        const endWithBuf = new Date((endTime || startTime).getTime() + bufferMs);
+        const conflict = jobs.some(j => j.equipmentId === equipmentId && j.scheduledStart && (
+          (new Date(j.scheduledStart).getTime() < endWithBuf.getTime()) &&
+          (new Date(j.scheduledEnd || j.scheduledStart as any).getTime() > startWithBuf.getTime())
+        ));
+        if (conflict) {
+          toast({ variant: 'destructive', title: 'Buffer time conflict', description: `Requires ${bufferMin} min buffer on this station.` });
+          pendingOpsRef.current.delete(jobId);
+          return;
+        }
+      }
+      // Material & Inventory rules
+      try {
+        const mr = (rules?.materialRules || {}) as any;
+        if (mr.checkStockBeforeScheduling) {
+          const materialStatus = (job as any).materialStatus as string | undefined;
+          const ready = materialStatus && (materialStatus === 'ready' || materialStatus === 'in_stock' || materialStatus === 'received');
+          if (!ready) {
+            toast({ variant: 'destructive', title: 'Materials not ready', description: 'This job cannot be scheduled until garments/materials are received.' });
+            pendingOpsRef.current.delete(jobId);
+            return;
+          }
+        }
+        if (mr.reorderPointWarnings) {
+          const threshold = Number(mr.lowStockThreshold || 0);
+          const materialStatus = (job as any).materialStatus as string | undefined;
+          if (materialStatus === 'low_stock') {
+            toast({ title: 'Low stock warning', description: 'Garments are flagged low stock for this item.' });
+          } else if (threshold > 0 && Number(job.totalQuantity || 0) >= threshold) {
+            toast({ title: 'Large order — verify stock', description: `Quantity ${job.totalQuantity} meets/exceeds threshold ${threshold}.` });
+          }
+        }
+      } catch {}
+
+      // Outsourcing rules
+      try {
+        const orules = (rules?.outsourcingRules || {}) as any;
+        if (orules.autoOutsourcing?.enabled) {
+          const camelize = (s: string) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+          const methodKeyCamel = selectedMethod === 'screen_printing' ? 'screenPrinting' : camelize(selectedMethod);
+          // Capacity-based outsourcing
+          const thresholdPct = Number(orules.autoOutsourcing.capacityThreshold || 0);
+          if (thresholdPct > 0) {
+            const sameDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+            const dayKey = sameDay(startTime);
+            const eqJobs = jobs.filter(j => j.equipmentId === equipmentId && j.scheduledStart && sameDay(new Date(j.scheduledStart)) === dayKey);
+            const totalHours = eqJobs.reduce((acc, j) => {
+              const s = new Date(j.scheduledStart as any).getTime();
+              const e = new Date((j.scheduledEnd || j.scheduledStart) as any).getTime();
+              return acc + Math.max(0, (e - s) / 3600000);
+            }, 0) + Math.max(0, ((endTime.getTime() - startTime.getTime()) / 3600000));
+            const orgEq = (organization as any)?.org_settings?.production?.equipment as Array<any> | undefined;
+            const capPerDay = (() => {
+              const meta = (orgEq || []).find(eq => String(eq.id) === String(equipmentId));
+              const cap = Number(meta?.capacity || 0);
+              return cap > 0 ? cap / 60 : 8; // fallback 8h/day
+            })();
+            const utilization = capPerDay > 0 ? (totalHours / capPerDay) * 100 : 0;
+            if (utilization >= thresholdPct) {
+              const vendors = ((orules.preferredVendors || {})[methodKeyCamel] || []) as string[];
+              const vendorMsg = vendors.length ? `Preferred vendors: ${vendors.join(', ')}` : 'No preferred vendors configured.';
+              toast({ variant: 'destructive', title: 'Auto-outsourcing recommended', description: `Capacity exceeds ${thresholdPct}%. ${vendorMsg}` });
+              try { await logAudit(jobId, 'auto_outsource_recommended', { reason: 'capacity', utilization, thresholdPct, equipment_id: equipmentId }); } catch {}
+              pendingOpsRef.current.delete(jobId);
+              return;
+            }
+          }
+          // Lead-time-based outsourcing
+          const bufferDays = Number(orules.autoOutsourcing.leadTimeBuffer || 0);
+          if (bufferDays > 0 && job.dueDate) {
+            const hoursLeft = Math.ceil(((new Date(job.dueDate).getTime()) - startTime.getTime()) / 3600000);
+            if (hoursLeft < bufferDays * 24) {
+              const vendors = ((orules.preferredVendors || {})[methodKeyCamel] || []) as string[];
+              const vendorMsg = vendors.length ? `Preferred vendors: ${vendors.join(', ')}` : 'No preferred vendors configured.';
+              toast({ variant: 'destructive', title: 'Auto-outsourcing recommended', description: `Lead time < ${bufferDays} day(s). ${vendorMsg}` });
+              try { await logAudit(jobId, 'auto_outsource_recommended', { reason: 'lead_time', hoursLeft, bufferDays }); } catch {}
+              pendingOpsRef.current.delete(jobId);
+              return;
+            }
+          }
+        }
+      } catch {}
+      // Notification Rules
+      try {
+        const notif = (rules?.notificationRules || {}) as any;
+        // Due Date warnings: when scheduling a job close to/after its due date
+        if (notif.dueDateWarnings?.enabled && job.dueDate) {
+          const hoursLeft = Math.ceil(((new Date(job.dueDate).getTime()) - startTime.getTime()) / 3600000);
+          const triggers: number[] = Array.isArray(notif.dueDateWarnings.warningHours) ? notif.dueDateWarnings.warningHours : [];
+          const hit = triggers.find(t => hoursLeft <= t);
+          if (hit != null) {
+            toast({ title: 'Due soon', description: `Job due in ~${Math.max(hoursLeft, 0)}h (threshold ${hit}h).` });
+          }
+        }
+        // Capacity overload: warn if total scheduled hours on this equipment/day cross threshold
+        if (notif.capacityOverload?.enabled) {
+          const thresholdPct = Number(notif.capacityOverload.thresholdPercentage || 0);
+          if (thresholdPct > 0) {
+            const sameDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+            const dayKey = sameDay(startTime);
+            const eqJobs = jobs.filter(j => j.equipmentId === equipmentId && j.scheduledStart && sameDay(new Date(j.scheduledStart)) === dayKey);
+            const totalHours = eqJobs.reduce((acc, j) => {
+              const s = new Date(j.scheduledStart as any).getTime();
+              const e = new Date((j.scheduledEnd || j.scheduledStart) as any).getTime();
+              return acc + Math.max(0, (e - s) / 3600000);
+            }, 0) + Math.max(0, ((endTime.getTime() - startTime.getTime()) / 3600000));
+            // Capacity via org equipment if available; fallback to 8h/day
+            const orgEq = (organization as any)?.org_settings?.production?.equipment as Array<any> | undefined;
+            const capPerDay = (() => {
+              const meta = (orgEq || []).find(eq => String(eq.id) === String(equipmentId));
+              const cap = Number(meta?.capacity || 0);
+              return cap > 0 ? cap / 60 /* if capacity was per day units; adjust as needed */ : 8; // assume hours/day fallback
+            })();
+            const utilization = capPerDay > 0 ? (totalHours / capPerDay) * 100 : 0;
+            if (utilization >= thresholdPct) {
+              toast({ title: 'Capacity warning', description: `This station is at ~${Math.round(utilization)}% capacity for the day.` });
+            }
+          }
+        }
+        // Equipment maintenance reminders: heuristic placeholder based on scheduled hours
+        if (notif.equipmentMaintenance?.enabled) {
+          const interval = Number(notif.equipmentMaintenance.maintenanceIntervalHours || 0);
+          if (interval > 0) {
+            const eqJobs = jobs.filter(j => j.equipmentId === equipmentId);
+            const accumulated = eqJobs.reduce((acc, j) => {
+              const s = j.scheduledStart ? new Date(j.scheduledStart).getTime() : 0;
+              const e = j.scheduledEnd ? new Date(j.scheduledEnd).getTime() : s;
+              return acc + Math.max(0, (e - s) / 3600000);
+            }, 0) + Math.max(0, ((endTime.getTime() - startTime.getTime()) / 3600000));
+            if (accumulated >= interval && Math.abs(accumulated - interval) < 2 /* within 2 hours window */) {
+              toast({ title: 'Maintenance reminder', description: 'This station is due for maintenance soon.' });
+            }
+          }
+        }
+      } catch {}
+      // Basic Scheduling rules: setup buffer and rush priority
+      try {
+        const setupBufMin = Number(rules?.setupTimeBuffer || 0);
+        if (setupBufMin > 0) {
+          // Apply setup buffer by extending the end time
+          endTime = new Date(endTime.getTime() + setupBufMin * 60000);
+        }
+        if (rules?.rushJobPriority) {
+          // Warn if placing a non-rush job ahead of a rush job due earlier on the same equipment
+          const rushSoon = jobs.some(j => j.equipmentId === equipmentId && (j as any).priority === 'high' && j.dueDate && new Date(j.dueDate).getTime() < (job.dueDate ? new Date(job.dueDate).getTime() : Number.MAX_SAFE_INTEGER));
+          if (rushSoon && (job as any).priority !== 'high') {
+            toast({ title: 'Rush priority policy', description: 'A rush job due earlier is queued on this station.' });
+          }
+        }
+      } catch {}
+
+      // Cost Optimization rules (suggestions only)
+      try {
+        const cost = (rules?.costOptimization || {}) as any;
+        // Rush job surcharge suggestion
+        if (cost.rushJobSurcharge?.enabled && job.dueDate) {
+          const hoursLeft = Math.ceil(((new Date(job.dueDate).getTime()) - startTime.getTime()) / 3600000);
+          const threshold = Number(cost.rushJobSurcharge.rushThresholdHours || 0);
+          if (threshold > 0 && hoursLeft <= threshold) {
+            const pct = Number(cost.rushJobSurcharge.surchargePercentage || 0);
+            toast({ title: 'Rush surcharge suggested', description: `Due in ~${Math.max(hoursLeft, 0)}h. Consider surcharge ${pct}%` });
+          }
+        }
+        // Small quantity penalty suggestion
+        if (cost.smallQuantityPenalty?.enabled) {
+          const minQty = Number(cost.smallQuantityPenalty.minimumQuantity || 0);
+          if (minQty > 0 && Number(job.totalQuantity || 0) < minQty) {
+            const pct = Number(cost.smallQuantityPenalty.penaltyPercentage || 0);
+            toast({ title: 'Small quantity penalty suggested', description: `Qty ${job.totalQuantity} < ${minQty}. Consider ${pct}% penalty` });
+          }
+        }
+        // Utilization target hint
+        if (Number(cost.equipmentUtilizationTarget || 0) > 0) {
+          const target = Number(cost.equipmentUtilizationTarget);
+          const sameDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+          const dayKey = sameDay(startTime);
+          const eqJobs = jobs.filter(j => j.equipmentId === equipmentId && j.scheduledStart && sameDay(new Date(j.scheduledStart)) === dayKey);
+          const totalHours = eqJobs.reduce((acc, j) => {
+            const s = new Date(j.scheduledStart as any).getTime();
+            const e = new Date((j.scheduledEnd || j.scheduledStart) as any).getTime();
+            return acc + Math.max(0, (e - s) / 3600000);
+          }, 0) + Math.max(0, ((endTime.getTime() - startTime.getTime()) / 3600000));
+          const orgEq = (organization as any)?.org_settings?.production?.equipment as Array<any> | undefined;
+          const capPerDay = (() => {
+            const meta = (orgEq || []).find(eq => String(eq.id) === String(equipmentId));
+            const cap = Number(meta?.capacity || 0);
+            return cap > 0 ? cap / 60 : 8; // fallback 8h/day
+          })();
+          const utilization = capPerDay > 0 ? (totalHours / capPerDay) * 100 : 0;
+          if (utilization < target - 5) {
+            toast({ description: `Station utilization ~${Math.round(utilization)}% (< target ${target}%).` });
+          } else if (utilization > target + 5) {
+            toast({ description: `Station utilization ~${Math.round(utilization)}% (> target ${target}%).` });
+          }
+        }
+      } catch {}
+      // Quality Control reminder: surface checklist when the target stage has an enabled checkpoint
+      try {
+        const qc = (rules?.qualityControl || {}) as any;
+        const checkpoints = (qc?.qualityCheckpoints || {}) as Record<string, { enabled: boolean; checklistItems: string[] }>;
+        // Build candidate keys to match how settings are saved (methodId.stageId) or legacy (stageId)
+        const camelize = (s: string) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+        const methodCandidates = new Set<string>([
+          selectedMethod,
+          selectedMethod === 'screen_printing' ? 'screenPrinting' : camelize(selectedMethod)
+        ]);
+        const keyCandidates: string[] = [
+          ...Array.from(methodCandidates).map(m => `${m}.${toStage}`),
+          `${toStage}`,
+        ];
+        const key = keyCandidates.find(k => checkpoints[k]?.enabled);
+        if (key) {
+          const items = checkpoints[key]?.checklistItems || [];
+          if (items.length) {
+            const preview = items.slice(0, 3).join(' • ');
+            const more = items.length > 3 ? ` (+${items.length - 3} more)` : '';
+            toast({ title: 'QC checkpoint for this stage', description: `${preview}${more}` });
+          } else {
+            toast({ title: 'QC checkpoint for this stage', description: 'Checklist required' });
+          }
+        }
+      } catch {}
+    } catch {}
+    // ensure endTime matches the duration we expect to render
+    endTime = new Date(startTime.getTime() + Math.round(hoursToUse * 60) * 60000);
+    // console.debug('[DnD] handleJobSchedule', { jobId, equipmentId, start: startTime.toISOString(), end: endTime.toISOString(), stage: toStage, hours: hoursToUse });
     setJobs(jobs => jobs.map(j =>
       j.id === jobId
-        ? { ...j, status: "scheduled", currentStage: toStage, equipmentId, scheduledStart: startTime, scheduledEnd: endTime }
+        ? { ...j, status: "scheduled", currentStage: toStage, equipmentId, scheduledStart: startTime, scheduledEnd: endTime, estimatedHours: stageHours || j.estimatedHours || 1 }
         : j
     ));
     try {
@@ -438,10 +941,7 @@ export default function PrintavoPowerScheduler() {
   };
 
   const handleJobUnschedule = async (jobId: string) => {
-    if (!canOperate(jobs.find(j => j.id === jobId))) {
-      toast({ title: 'Not allowed', description: 'You do not have permission to unschedule jobs.', variant: 'destructive' });
-      return;
-    }
+    // Permissions relaxed
     if (pendingOpsRef.current.has(jobId)) return;
     pendingOpsRef.current.add(jobId);
     const job = jobs.find(j => j.id === jobId);
@@ -452,7 +952,9 @@ export default function PrintavoPowerScheduler() {
         : j
     ));
     try { 
-      await supabase.rpc('unschedule_job', { p_job_id: jobId }); 
+      // Unschedule only for the active stage
+      await supabase.rpc('unschedule_job_stage', { p_job_id: jobId, p_stage: selectedStage }); 
+      console.debug('[Stage] unschedule_job_stage ok', { jobId, selectedStage });
       track('job_status_changed', { job_id: jobId, from_status: 'scheduled', to_status: 'unscheduled' });
       await logAudit(jobId, 'unschedule', { fromStage, toStage: null });
     } catch {}
@@ -460,10 +962,7 @@ export default function PrintavoPowerScheduler() {
   };
 
   const handleStageAdvance = async (jobId: string) => {
-    if (!canOperate(jobs.find(j => j.id === jobId))) {
-      toast({ title: 'Not allowed', description: 'You do not have permission to advance stages.', variant: 'destructive' });
-      return;
-    }
+    // Permissions relaxed
     if (pendingOpsRef.current.has(jobId)) return;
     pendingOpsRef.current.add(jobId);
     const currentStages = stagesByMethod[selectedMethod];
@@ -488,10 +987,7 @@ export default function PrintavoPowerScheduler() {
   };
 
   const handleJobStart = async (jobId: string) => {
-    if (!canOperate(jobs.find(j => j.id === jobId))) {
-      toast({ title: 'Not allowed', description: 'You do not have permission to start jobs.', variant: 'destructive' });
-      return;
-    }
+    // Permissions relaxed
     if (pendingOpsRef.current.has(jobId)) return;
     pendingOpsRef.current.add(jobId);
     setJobs(jobs => jobs.map(j => j.id === jobId ? { ...j, status: 'in_progress' } : j));
@@ -504,10 +1000,7 @@ export default function PrintavoPowerScheduler() {
   };
 
   const handleJobMarkDone = async (jobId: string) => {
-    if (!canOperate(jobs.find(j => j.id === jobId))) {
-      toast({ title: 'Not allowed', description: 'You do not have permission to complete jobs.', variant: 'destructive' });
-      return;
-    }
+    // Permissions relaxed
     if (pendingOpsRef.current.has(jobId)) return;
     pendingOpsRef.current.add(jobId);
     setJobs(jobs => jobs.map(j => j.id === jobId ? { ...j, status: 'done' } : j));
@@ -521,10 +1014,7 @@ export default function PrintavoPowerScheduler() {
   };
 
   const handleJobBlockToggle = async (jobId: string, block: boolean) => {
-    if (!canOperate(jobs.find(j => j.id === jobId))) {
-      toast({ title: 'Not allowed', description: 'You do not have permission to change block status.', variant: 'destructive' });
-      return;
-    }
+    // Permissions relaxed
     if (pendingOpsRef.current.has(jobId)) return;
     pendingOpsRef.current.add(jobId);
     setJobs(jobs => jobs.map(j => j.id === jobId ? { ...j, status: block ? 'blocked' as any : 'scheduled' } : j));
@@ -537,10 +1027,7 @@ export default function PrintavoPowerScheduler() {
   };
 
   const handleJobReopen = async (jobId: string) => {
-    if (!canOperate(jobs.find(j => j.id === jobId))) {
-      toast({ title: 'Not allowed', description: 'You do not have permission to reopen jobs.', variant: 'destructive' });
-      return;
-    }
+    // Permissions relaxed
     if (pendingOpsRef.current.has(jobId)) return;
     pendingOpsRef.current.add(jobId);
     setJobs(jobs => jobs.map(j => j.id === jobId ? { ...j, status: 'scheduled' } : j));
@@ -562,6 +1049,26 @@ export default function PrintavoPowerScheduler() {
     setIsJobDetailModalOpen(false);
   };
 
+  const handleStageChangeFromModal = async (stageId: string) => {
+    if (!selectedJob) return;
+    const jobId = selectedJob.id;
+    setJobs(prev => prev.map(j => j.id === jobId ? { ...j, currentStage: stageId as any } : j));
+    try {
+      await supabase.rpc('move_job', { p_job_id: jobId, p_stage: stageId, p_start: null, p_end: null, p_equipment_id: null });
+    } catch {}
+  };
+
+  const handleDeleteJob = async (jobId: string) => {
+    try {
+      await supabase.from('production_jobs').delete().eq('id', jobId);
+    } catch (e) {
+      console.warn('delete production_job failed', e);
+    } finally {
+      setJobs(prev => prev.filter(j => j.id !== jobId));
+      setIsJobDetailModalOpen(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-background">
       <SchedulerHeader 
@@ -575,12 +1082,13 @@ export default function PrintavoPowerScheduler() {
           <DecorationMethodDropdown 
             selectedMethod={selectedMethod}
             onMethodChange={handleMethodChange}
+            methods={methodOptions}
           />
           
           <ProductionStageDropdown
             selectedStage={selectedStage}
-            onStageChange={setSelectedStage}
-            stages={stagesByMethod[selectedMethod]}
+            onStageChange={setSelectedStage as any}
+            stages={stagesByMethod[selectedMethod] || []}
           />
 
           <div className="flex items-center gap-3 ml-auto">
@@ -645,7 +1153,10 @@ export default function PrintavoPowerScheduler() {
             {Array.from({ length: 7 }).map((_, idx) => {
               const d = new Date(selectedDate);
               d.setDate(selectedDate.getDate() - d.getDay() + idx);
-              const dayJobs = jobs.filter(j => j.scheduledStart ? new Date(j.scheduledStart).toDateString() === d.toDateString() : false);
+              const dayJobs = jobs.filter(j => (
+                j.decorationMethod === selectedMethod &&
+                j.scheduledStart ? new Date(j.scheduledStart).toDateString() === d.toDateString() : false
+              ));
               return (
                 <div key={idx} className="border rounded-md p-2 min-h-[200px]">
                   <div className="text-sm font-medium mb-2">{d.toLocaleDateString()}</div>
@@ -655,6 +1166,9 @@ export default function PrintavoPowerScheduler() {
                         {j.customerName} — {j.description}
                       </div>
                     ))}
+                    {dayJobs.length === 0 && (
+                      <div className="text-xs text-muted-foreground">No scheduled jobs</div>
+                    )}
                   </div>
                 </div>
               );
@@ -670,6 +1184,8 @@ export default function PrintavoPowerScheduler() {
         onStageAdvance={selectedJob ? () => handleStageAdvance(selectedJob.id) : undefined}
         onUnschedule={selectedJob ? () => handleJobUnscheduleFromModal(selectedJob.id) : undefined}
         allJobs={jobs}
+        onStageChange={handleStageChangeFromModal}
+        onDelete={selectedJob ? () => handleDeleteJob(selectedJob.id) : undefined}
       />
     </div>
   );

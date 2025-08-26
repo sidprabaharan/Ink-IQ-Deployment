@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import { useOrganization } from "@/context/OrganizationContext";
+import { runStatusChangeAutomations } from "@/lib/automation";
 
 interface StatusDropdownProps {
   currentStatus: string;
@@ -17,12 +19,20 @@ interface StatusDropdownProps {
 
 export function StatusDropdown({ currentStatus, onStatusChange }: StatusDropdownProps) {
   const { toast } = useToast();
+  const { organization } = useOrganization();
   
   const handleStatusSelect = (status: string) => {
     onStatusChange(status);
     toast({
       title: "Garment Status Updated",
       description: `Garment status changed to "${status}"`,
+    });
+
+    runStatusChangeAutomations(organization?.org_settings, {
+      entityType: 'garment',
+      toStatus: status,
+    }, {
+      notify: (title, description) => toast({ title, description }),
     });
   };
 

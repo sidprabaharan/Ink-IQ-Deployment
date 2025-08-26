@@ -4,6 +4,7 @@ import { QuoteHeader } from "@/components/quotes/QuoteHeader";
 import { QuoteDetailHeader } from "@/components/quotes/QuoteDetailHeader";
 import { useInvoices } from "@/context/InvoicesContext";
 import { CompanyInfoCard } from "@/components/quotes/CompanyInfoCard";
+import { useOrganization } from "@/context/OrganizationContext";
 import { QuoteDetailsCard } from "@/components/quotes/QuoteDetailsCard";
 import { CustomerInfoCard } from "@/components/quotes/CustomerInfoCard";
 import { QuoteItemsTable } from "@/components/quotes/QuoteItemsTable";
@@ -17,8 +18,10 @@ import { Plus } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 // LocalStorage image helpers removed; rely on DB only
 import { supabase } from "@/lib/supabase";
+import { getAssetUrl } from "@/lib/utils";
 
 export default function QuoteDetail() {
+  const { organization } = useOrganization();
   const { id } = useParams();
   const navigate = useNavigate();
   const { getQuote } = useQuotes();
@@ -64,10 +67,15 @@ export default function QuoteDetail() {
         if (files && files.length > 0 && !error) {
           const filesWithUrls = await Promise.all(
             files.map(async (file) => {
-              const { data: signedUrl } = await supabase.storage
-                .from('artwork')
-                .createSignedUrl(file.file_path, 3600);
-              return { ...file, url: signedUrl?.signedUrl || null };
+              const mode = import.meta.env.VITE_ASSETS_MODE;
+              if (mode === 'local') {
+                return { ...file, url: await getAssetUrl(file.file_path) };
+              } else {
+                const { data: signedUrl } = await supabase.storage
+                  .from('artwork')
+                  .createSignedUrl(file.file_path, 3600);
+                return { ...file, url: signedUrl?.signedUrl || null };
+              }
             })
           );
           console.debug('[QuoteDetail] DB artwork_files found', { itemId: item.id, count: filesWithUrls.length });
@@ -97,15 +105,14 @@ export default function QuoteDetail() {
             if (listErr || !Array.isArray(listed)) continue;
             for (const obj of listed) {
               const fullPath = `${folder}/${obj.name}`;
-              const { data: signedUrl } = await supabase.storage
-                .from('artwork')
-                .createSignedUrl(fullPath, 3600);
+              const mode = import.meta.env.VITE_ASSETS_MODE;
+              const url = mode === 'local' ? await getAssetUrl(fullPath) : (await supabase.storage.from('artwork').createSignedUrl(fullPath, 3600)).data?.signedUrl;
               collected.push({
                 id: `${imprintId}-${cat}-${obj.name}`,
                 file_name: obj.name,
                 file_type: (obj as any).metadata?.mimetype || 'application/octet-stream',
                 category: cat,
-                url: signedUrl?.signedUrl || null,
+                url: url || null,
                 imprint_id: imprintId,
                 quote_item_id: item.id,
               });
@@ -143,8 +150,13 @@ export default function QuoteDetail() {
                 const { data: libDetail } = await supabase.rpc('get_library_imprint_detail', { p_imprint_id: r.library_imprint_id });
                 const previewPath = (libDetail as any)?.imprint?.preview_path;
                 if (previewPath) {
-                  const { data: signed } = await supabase.storage.from('artwork').createSignedUrl(previewPath, 3600);
-                  preview_url = signed?.signedUrl || null;
+                  const mode = import.meta.env.VITE_ASSETS_MODE;
+                  if (mode === 'local') {
+                    preview_url = await getAssetUrl(previewPath);
+                  } else {
+                    const { data: signed } = await supabase.storage.from('artwork').createSignedUrl(previewPath, 3600);
+                    preview_url = signed?.signedUrl || null;
+                  }
                 }
               } catch {}
             }
@@ -300,15 +312,22 @@ export default function QuoteDetail() {
   // Format the quote data for display
   const status = quote.status;
   
-  // Format financial amounts with safety checks
-  const totalAmountValue = parseFloat(quote.total_amount) || 0;
+  // Compute financials from items to avoid stale DB totals
+  const itemsArray = (quote.items || []) as any[];
+  const computedSubtotalValue = itemsArray.reduce((sum, it: any) => {
+    const totalPrice = parseFloat(it?.total_price as any);
+    if (!isNaN(totalPrice) && totalPrice > 0) return sum + totalPrice;
+    const unit = parseFloat(it?.unit_price as any) || 0;
+    const qty = parseFloat(it?.quantity as any) || 0;
+    return sum + unit * qty;
+  }, 0);
   const taxRateValue = parseFloat(quote.tax_rate) || 0;
-  const taxAmountValue = totalAmountValue * taxRateValue;
-  const subtotalAmountValue = totalAmountValue - taxAmountValue;
-  
-  const totalAmount = `$${totalAmountValue.toFixed(2)}`;
+  const taxAmountValue = computedSubtotalValue * taxRateValue;
+  const totalAmountValue = computedSubtotalValue + taxAmountValue;
+
+  const subtotalAmount = `$${computedSubtotalValue.toFixed(2)}`;
   const taxAmount = `$${taxAmountValue.toFixed(2)}`;
-  const subtotalAmount = `$${subtotalAmountValue.toFixed(2)}`;
+  const totalAmount = `$${totalAmountValue.toFixed(2)}`;
   
   // For now, assume no payments made (all amount is outstanding)
   const amountOutstanding = totalAmount;
@@ -360,7 +379,7 @@ export default function QuoteDetail() {
   const formattedDetails = {
     number: quote.quote_number,
     date: new Date(quote.created_at).toLocaleDateString(),
-    expiryDate: quote.valid_until ? new Date(quote.valid_until).toLocaleDateString() : "N/A",
+    expiryDate: quote.payment_due_date ? new Date(quote.payment_due_date).toLocaleDateString() : (quote.valid_until ? new Date(quote.valid_until).toLocaleDateString() : "N/A"),
     productionDueDate: quote.production_due_date ? new Date(quote.production_due_date).toLocaleDateString() : "N/A",
     customerDueDate: quote.customer_due_date ? new Date(quote.customer_due_date).toLocaleDateString() : "N/A",
     salesRep: "N/A", // Column doesn't exist in database yet
@@ -559,24 +578,29 @@ export default function QuoteDetail() {
     return groups;
   })() : [];
   
-  // Create mock company info (keeping existing format)
+  // Company info from org settings
+  const orgSettings: any = organization?.org_settings || {};
   const companyInfo = {
-    name: "InkIQ Print Solutions",
-    address: "123 Business St",
-    city: "Toronto", 
-    province: "ON",
-    postalCode: "M1A 1A1",
-    phone: "(555) 123-4567",
-    email: "info@inkiq.com"
+    name: orgSettings.companyName || organization?.org_name || "",
+    logo: orgSettings.logoUrl || undefined,
+    address: orgSettings.address || "",
+    city: orgSettings.city || "",
+    region: orgSettings.state || "",
+    postalCode: orgSettings.zip || "",
+    phone: orgSettings.phone || "",
+    website: orgSettings.website || "",
+    email: orgSettings.email || "",
   };
 
-  // Format summary (keeping existing format)
+  // Invoice Summary for InvoiceSummaryCard
   const quoteSummary = {
-    subtotal: subtotalAmount,
-    taxRate: `${(quote.tax_rate * 100).toFixed(1)}%`,
-    taxAmount: taxAmount,
-    totalDue: totalAmount
-  };
+    itemTotal: subtotalAmount,
+    feesTotal: "$0.00",
+    subTotal: subtotalAmount,
+    discount: "$0.00",
+    salesTax: taxAmount,
+    totalDue: totalAmount,
+  } as any;
   
   return (
     <div className="p-6 bg-gray-50 min-h-full">
@@ -660,10 +684,10 @@ export default function QuoteDetail() {
             <NotesCard title="Customer Notes" content={quote.notes || "No customer notes"} />
             
             {/* Production Notes */}
-            <NotesCard title="Production Notes" content={quote.description || "No production notes"} />
+            <NotesCard title="Production Notes" content={quote.terms_conditions || "No production notes"} />
             
-            {/* Invoice Summary */}
-            <InvoiceSummaryCard summary={quoteSummary} />
+            {/* Quote Summary */}
+            <InvoiceSummaryCard summary={quoteSummary} title="Quote Summary" />
           </div>
         </div>
     </div>

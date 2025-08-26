@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
 import { IMPRINT_METHODS, getMethodConfig } from '@/types/imprint';
 import { EquipmentConstraints } from '@/types/equipment';
 import { EquipmentConstraintsForm } from '@/components/settings/EquipmentConstraintsForm';
+import { useOrganization } from '@/context/OrganizationContext';
 
 interface DecorationMethod {
   id: string;
@@ -160,26 +161,41 @@ const defaultWorkingHours: WorkingHours = {
 };
 
 export function ProductionSettings() {
-  const [decorationMethods, setDecorationMethods] = useState<DecorationMethod[]>(
-    IMPRINT_METHODS.slice(0, 4).map((method, index) => ({
+  const { organization, updateOrganizationSettings } = useOrganization();
+  const orgMethods = useMemo(() => {
+    const s: any = organization?.org_settings || {};
+    return s.production?.decorationMethods as DecorationMethod[] | undefined;
+  }, [organization]);
+  const [decorationMethods, setDecorationMethods] = useState<DecorationMethod[]>([]);
+
+  useEffect(() => {
+    if (orgMethods && Array.isArray(orgMethods) && orgMethods.length) {
+      setDecorationMethods(orgMethods);
+      return;
+    }
+    // Fallback to sensible defaults (first 4 imprint methods)
+    const defaults = IMPRINT_METHODS.slice(0, 4).map((method) => ({
       id: method.value,
       name: method.value,
       label: method.label,
       enabled: true,
       stages: getDefaultStagesForMethod(method.value)
-    }))
-  );
+    }));
+    setDecorationMethods(defaults);
+  }, [orgMethods]);
 
   const [editingMethod, setEditingMethod] = useState<DecorationMethod | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [newMethodName, setNewMethodName] = useState('');
+  const [savingMethods, setSavingMethods] = useState(false);
 
   function getDefaultStagesForMethod(methodValue: string): ProductionStage[] {
     const stageMap: Record<string, ProductionStage[]> = {
+      // Canonical IDs aligned with scheduler equipmentConfig
       screenPrinting: [
-        { id: 'art_prep', name: 'Art Preparation', color: 'bg-blue-500', order: 1 },
-        { id: 'screen_making', name: 'Screen Making', color: 'bg-purple-500', order: 2 },
-        { id: 'printing', name: 'Printing', color: 'bg-green-500', order: 3 },
-        { id: 'curing', name: 'Curing', color: 'bg-orange-500', order: 4 },
+        { id: 'burn_screens', name: 'Burn Screens', color: 'bg-blue-500', order: 1 },
+        { id: 'mix_ink', name: 'Mix Ink', color: 'bg-purple-500', order: 2 },
+        { id: 'print', name: 'Print', color: 'bg-green-500', order: 3 },
       ],
       embroidery: [
         { id: 'digitizing', name: 'Digitizing', color: 'bg-blue-500', order: 1 },
@@ -195,8 +211,8 @@ export function ProductionSettings() {
       ],
       dtg: [
         { id: 'pretreat', name: 'Pretreatment', color: 'bg-blue-500', order: 1 },
-        { id: 'printing', name: 'Printing', color: 'bg-green-500', order: 2 },
-        { id: 'curing', name: 'Curing', color: 'bg-orange-500', order: 3 },
+        { id: 'dtg_print', name: 'DTG Print', color: 'bg-green-500', order: 2 },
+        { id: 'dtg_cure', name: 'DTG Cure', color: 'bg-orange-500', order: 3 },
       ],
     };
     
@@ -222,18 +238,62 @@ export function ProductionSettings() {
     );
     setIsEditDialogOpen(false);
     setEditingMethod(null);
+    // Persist changes to org settings
+    handlePersistMethods().catch(() => {});
+  };
+
+  const slugify = (txt: string) => txt.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+
+  const handleAddMethod = () => {
+    const name = newMethodName.trim();
+    if (!name) return;
+    const id = slugify(name);
+    if (decorationMethods.some(m => m.id === id)) {
+      setNewMethodName('');
+      return;
+    }
+    const method: DecorationMethod = {
+      id,
+      name: id,
+      label: name,
+      enabled: true,
+      stages: getDefaultStagesForMethod(id)
+    };
+    const next = [...decorationMethods, method];
+    setDecorationMethods(next);
+    setNewMethodName('');
+    // Persist immediately so Production reflects without extra steps
+    handlePersistMethods(next).catch(() => {});
+  };
+
+  const handlePersistMethods = async (override?: DecorationMethod[]) => {
+    try {
+      setSavingMethods(true);
+      const methodsToSave = override ?? decorationMethods;
+      const existingProduction = (organization?.org_settings as any)?.production || {};
+      const payload = { production: { ...existingProduction, decorationMethods: methodsToSave, equipment } } as any;
+      const res = await updateOrganizationSettings(payload);
+      // no toast here; Settings page parent already provides feedback patterns elsewhere
+      return res;
+    } finally {
+      setSavingMethods(false);
+    }
   };
 
   const handleToggleMethod = (methodId: string) => {
-    setDecorationMethods(prev =>
-      prev.map(method =>
+    const next = decorationMethods.map(method =>
         method.id === methodId ? { ...method, enabled: !method.enabled } : method
-      )
     );
+    setDecorationMethods(next);
+    // Persist immediately to reflect on Production page
+    handlePersistMethods(next).catch(() => {});
   };
 
   const handleDeleteMethod = (methodId: string) => {
-    setDecorationMethods(prev => prev.filter(method => method.id !== methodId));
+    const next = decorationMethods.filter(method => method.id !== methodId);
+    setDecorationMethods(next);
+    // Persist immediately to reflect on Production page
+    handlePersistMethods(next).catch(() => {});
   };
 
   const handleAddStage = () => {
@@ -246,30 +306,45 @@ export function ProductionSettings() {
       order: editingMethod.stages.length + 1
     };
     
-    setEditingMethod({
+    const nextEditing = {
       ...editingMethod,
       stages: [...editingMethod.stages, newStage]
-    });
+    };
+    setEditingMethod(nextEditing);
+    // Persist current method draft into list and save to org settings
+    const next = decorationMethods.map(m => m.id === nextEditing.id ? nextEditing : m);
+    setDecorationMethods(next);
+    handlePersistMethods(next).catch(() => {});
   };
 
   const handleUpdateStage = (stageId: string, updates: Partial<ProductionStage>) => {
     if (!editingMethod) return;
     
-    setEditingMethod({
+    const updated = {
       ...editingMethod,
       stages: editingMethod.stages.map(stage =>
         stage.id === stageId ? { ...stage, ...updates } : stage
       )
-    });
+    };
+    setEditingMethod(updated);
+    // Persist draft to list and save to org settings so Production reflects immediately
+    const next = decorationMethods.map(m => m.id === updated.id ? updated : m);
+    setDecorationMethods(next);
+    handlePersistMethods(next).catch(() => {});
   };
 
   const handleDeleteStage = (stageId: string) => {
     if (!editingMethod) return;
     
-    setEditingMethod({
+    const updated = {
       ...editingMethod,
       stages: editingMethod.stages.filter(stage => stage.id !== stageId)
-    });
+    };
+    setEditingMethod(updated);
+    // Persist draft to list and save
+    const next = decorationMethods.map(m => m.id === updated.id ? updated : m);
+    setDecorationMethods(next);
+    handlePersistMethods(next).catch(() => {});
   };
 
   const stageColors = [
@@ -344,6 +419,31 @@ export function ProductionSettings() {
   const [isHoursDialogOpen, setIsHoursDialogOpen] = useState(false);
 
   const [globalWorkingHours, setGlobalWorkingHours] = useState<WorkingHours>(defaultWorkingHours);
+  const [savingWH, setSavingWH] = useState(false);
+  // Load working hours from org settings when available
+  useEffect(() => {
+    const s: any = organization?.org_settings || {};
+    const fromOrg = s.production?.workingHours as WorkingHours | undefined;
+    if (fromOrg && typeof fromOrg === 'object') {
+      setGlobalWorkingHours({
+        monday: fromOrg.monday || defaultWorkingHours.monday,
+        tuesday: fromOrg.tuesday || defaultWorkingHours.tuesday,
+        wednesday: fromOrg.wednesday || defaultWorkingHours.wednesday,
+        thursday: fromOrg.thursday || defaultWorkingHours.thursday,
+        friday: fromOrg.friday || defaultWorkingHours.friday,
+        saturday: fromOrg.saturday || defaultWorkingHours.saturday,
+        sunday: fromOrg.sunday || defaultWorkingHours.sunday,
+      });
+    }
+  }, [organization]);
+  // Load equipment from org settings when available
+  useEffect(() => {
+    const s: any = organization?.org_settings || {};
+    const fromOrg = s.production?.equipment as Equipment[] | undefined;
+    if (Array.isArray(fromOrg)) {
+      setEquipment(fromOrg);
+    }
+  }, [organization]);
 
   const [productionRules, setProductionRules] = useState<ProductionRules>({
     autoGrouping: {
@@ -415,6 +515,90 @@ export function ProductionSettings() {
     rushJobPriority: true,
   });
 
+  // QC editor state
+  const allStageOptions = useMemo(() => {
+    return (decorationMethods || []).flatMap((m) =>
+      (m.stages || []).map((st) => ({
+        methodId: m.id,
+        methodLabel: m.label,
+        stageId: st.id,
+        stageName: st.name,
+      }))
+    );
+  }, [decorationMethods]);
+  const [qcNew, setQcNew] = useState<{ methodId: string; stageId: string; itemInput: string; items: string[] }>({ methodId: '', stageId: '', itemInput: '', items: [] });
+  const qcEntries = useMemo(() => {
+    const qp = productionRules.qualityControl.qualityCheckpoints || {};
+    return Object.entries(qp).map(([key, v]) => ({ key, ...v }));
+  }, [productionRules]);
+
+  const makeQcKey = (methodId: string, stageId: string) => {
+    // Prefer compound key to avoid cross-method collisions; also support legacy stage-only keys when reading elsewhere
+    return methodId && stageId ? `${methodId}.${stageId}` : (stageId || '');
+  };
+
+  const handleAddQcItemToNew = () => {
+    const txt = (qcNew.itemInput || '').trim();
+    if (!txt) return;
+    setQcNew(prev => ({ ...prev, items: [...prev.items, txt], itemInput: '' }));
+  };
+
+  const handleAddQcCheckpoint = () => {
+    if (!qcNew.methodId || !qcNew.stageId) return;
+    const key = makeQcKey(qcNew.methodId, qcNew.stageId);
+    setProductionRules(prev => {
+      const current = prev.qualityControl.qualityCheckpoints || {};
+      const next = {
+        ...current,
+        [key]: { enabled: true, checklistItems: [...qcNew.items] }
+      } as any;
+      return {
+        ...prev,
+        qualityControl: { ...prev.qualityControl, qualityCheckpoints: next }
+      };
+    });
+    setQcNew({ methodId: '', stageId: '', itemInput: '', items: [] });
+  };
+
+  const handleRemoveQcCheckpoint = (key: string) => {
+    setProductionRules(prev => {
+      const current = { ...(prev.qualityControl.qualityCheckpoints || {}) } as any;
+      delete current[key];
+      return { ...prev, qualityControl: { ...prev.qualityControl, qualityCheckpoints: current } };
+    });
+  };
+
+  const handleToggleQcCheckpoint = (key: string, enabled: boolean) => {
+    setProductionRules(prev => {
+      const current = { ...(prev.qualityControl.qualityCheckpoints || {}) } as any;
+      const row = current[key] || { enabled: false, checklistItems: [] };
+      current[key] = { ...row, enabled };
+      return { ...prev, qualityControl: { ...prev.qualityControl, qualityCheckpoints: current } };
+    });
+  };
+
+  const handleAddQcItemToExisting = (key: string, item: string) => {
+    const txt = (item || '').trim();
+    if (!txt) return;
+    setProductionRules(prev => {
+      const current = { ...(prev.qualityControl.qualityCheckpoints || {}) } as any;
+      const row = current[key] || { enabled: true, checklistItems: [] };
+      current[key] = { ...row, checklistItems: [...(row.checklistItems || []), txt] };
+      return { ...prev, qualityControl: { ...prev.qualityControl, qualityCheckpoints: current } };
+    });
+  };
+
+  const handleRemoveQcItem = (key: string, index: number) => {
+    setProductionRules(prev => {
+      const current = { ...(prev.qualityControl.qualityCheckpoints || {}) } as any;
+      const row = current[key];
+      if (!row) return prev;
+      const nextItems = (row.checklistItems || []).filter((_: string, i: number) => i !== index);
+      current[key] = { ...row, checklistItems: nextItems };
+      return { ...prev, qualityControl: { ...prev.qualityControl, qualityCheckpoints: current } };
+    });
+  };
+
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     jobGrouping: true,
     qualityControl: false,
@@ -424,11 +608,46 @@ export function ProductionSettings() {
     outsourcing: false,
   });
 
+  // Load production rules from org settings if present
+  useEffect(() => {
+    const s: any = organization?.org_settings || {};
+    const rules = s.production?.productionRules as ProductionRules | undefined;
+    if (rules && typeof rules === 'object') {
+      setProductionRules({
+        ...productionRules,
+        ...rules,
+        autoGrouping: { ...productionRules.autoGrouping, ...(rules as any).autoGrouping },
+        batchingRules: { ...productionRules.batchingRules, ...(rules as any).batchingRules },
+        qualityControl: { ...productionRules.qualityControl, ...(rules as any).qualityControl },
+        materialRules: { ...productionRules.materialRules, ...(rules as any).materialRules },
+        notificationRules: { ...productionRules.notificationRules, ...(rules as any).notificationRules },
+        costOptimization: { ...productionRules.costOptimization, ...(rules as any).costOptimization },
+        outsourcingRules: { ...productionRules.outsourcingRules, ...(rules as any).outsourcingRules },
+      });
+    }
+  }, [organization]);
+
+  const [savingRules, setSavingRules] = useState(false);
+  const handlePersistProductionRules = async () => {
+    try {
+      setSavingRules(true);
+      const existingProduction = (organization?.org_settings as any)?.production || {};
+      await updateOrganizationSettings({
+        production: {
+          ...existingProduction,
+          productionRules,
+        },
+      });
+    } finally {
+      setSavingRules(false);
+    }
+  };
+
   // Equipment handlers
   const handleAddEquipment = () => {
     if (!newEquipment.name || !newEquipment.type) return;
     
-    const equipment: Equipment = {
+    const newItem: Equipment = {
       id: `equipment_${Date.now()}`,
       name: newEquipment.name,
       type: newEquipment.type,
@@ -439,7 +658,11 @@ export function ProductionSettings() {
       constraints: newEquipment.constraints || defaultConstraints,
     };
     
-    setEquipment(prev => [...prev, equipment]);
+    const next = [...equipment, newItem];
+    setEquipment(next);
+    // Persist to org settings including decorationMethods and equipment
+    const existingProduction = (organization?.org_settings as any)?.production || {};
+    updateOrganizationSettings({ production: { ...existingProduction, decorationMethods, equipment: next } }).catch(() => {});
     setNewEquipment({
       name: '',
       type: '',
@@ -461,18 +684,20 @@ export function ProductionSettings() {
   const handleSaveEquipment = () => {
     if (!editingEquipment) return;
     
-    setEquipment(prev => 
-      prev.map(eq => 
-        eq.id === editingEquipment.id ? editingEquipment : eq
-      )
-    );
+    const next = equipment.map(eq => eq.id === editingEquipment.id ? editingEquipment : eq);
+    setEquipment(next);
+    const existingProduction = (organization?.org_settings as any)?.production || {};
+    updateOrganizationSettings({ production: { ...existingProduction, decorationMethods, equipment: next } }).catch(() => {});
     setIsEquipmentDialogOpen(false);
     setEditingEquipment(null);
     setIsEditingEquipment(false);
   };
 
   const handleDeleteEquipment = (equipmentId: string) => {
-    setEquipment(prev => prev.filter(eq => eq.id !== equipmentId));
+    const next = equipment.filter(eq => eq.id !== equipmentId);
+    setEquipment(next);
+    const existingProduction = (organization?.org_settings as any)?.production || {};
+    updateOrganizationSettings({ production: { ...existingProduction, decorationMethods, equipment: next } }).catch(() => {});
   };
 
   const handleAddStageAssignment = (equipmentToEdit: Equipment | Partial<Equipment>) => {
@@ -549,6 +774,11 @@ export function ProductionSettings() {
           : eq
       )
     );
+    // Persist equipment hours to org settings
+    try {
+      const existingProduction = (organization?.org_settings as any)?.production || {};
+      updateOrganizationSettings({ production: { ...existingProduction, decorationMethods, equipment } }).catch(() => {});
+    } catch {}
     setIsHoursDialogOpen(false);
     setEditingEquipmentHours(null);
   };
@@ -566,6 +796,28 @@ export function ProductionSettings() {
         }
       }
     });
+    
+  };
+
+  // Update global working hours
+  const handleUpdateGlobalWorkingHours = (day: keyof WorkingHours, updates: Partial<WorkingHours[keyof WorkingHours]>) => {
+    setGlobalWorkingHours(prev => ({ ...prev, [day]: { ...prev[day], ...updates } } as WorkingHours));
+  };
+
+  // Persist global working hours
+  const handlePersistWorkingHours = async () => {
+    const existingProduction = (organization?.org_settings as any)?.production || {};
+    const payload = { production: { ...existingProduction, workingHours: globalWorkingHours, decorationMethods, equipment } } as any;
+    await updateOrganizationSettings(payload);
+  };
+
+  const handlePersistWorkingHoursClick = async () => {
+    try {
+      setSavingWH(true);
+      await handlePersistWorkingHours();
+    } finally {
+      setSavingWH(false);
+    }
   };
 
   const formatWorkingHoursDisplay = (workingHours: WorkingHours): string => {
@@ -654,21 +906,24 @@ export function ProductionSettings() {
                     <div className="space-y-4">
                       <div>
                         <Label htmlFor="method-name">Method Name</Label>
-                        <Input id="method-name" placeholder="e.g., Heat Transfer Vinyl" />
+                        <Input id="method-name" placeholder="e.g., Heat Transfer Vinyl" value={newMethodName} onChange={(e) => setNewMethodName(e.target.value)} />
                       </div>
                       <div>
                         <Label htmlFor="method-stages">Production Stages</Label>
                         <div className="text-sm text-muted-foreground mt-1">
-                          Add stages for this decoration method (coming soon)
+                          Initial stages will be created based on method type; you can edit after adding.
                         </div>
                       </div>
                       <div className="flex justify-end gap-2">
                         <Button variant="outline">Cancel</Button>
-                        <Button>Add Method</Button>
+                        <Button onClick={handleAddMethod}>Add Method</Button>
                       </div>
                     </div>
                   </DialogContent>
                 </Dialog>
+                <Button variant="secondary" onClick={handlePersistMethods} disabled={savingMethods}>
+                  {savingMethods ? 'Saving…' : 'Save Methods'}
+                </Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -1205,13 +1460,14 @@ export function ProductionSettings() {
                     <div className="w-24">
                       <Label className="capitalize">{day}</Label>
                     </div>
-                    <Switch checked={hours.enabled} />
+                    <Switch checked={hours.enabled} onCheckedChange={(enabled) => handleUpdateGlobalWorkingHours(day as keyof WorkingHours, { enabled })} />
                     <div className="flex items-center gap-2">
                       <Input
                         type="time"
                         value={hours.start}
                         disabled={!hours.enabled}
                         className="w-32"
+                        onChange={(e) => handleUpdateGlobalWorkingHours(day as keyof WorkingHours, { start: e.target.value })}
                       />
                       <span className="text-muted-foreground">to</span>
                       <Input
@@ -1219,10 +1475,14 @@ export function ProductionSettings() {
                         value={hours.end}
                         disabled={!hours.enabled}
                         className="w-32"
+                        onChange={(e) => handleUpdateGlobalWorkingHours(day as keyof WorkingHours, { end: e.target.value })}
                       />
                     </div>
                   </div>
                 ))}
+                <div className="flex justify-end">
+                  <Button type="button" variant="secondary" disabled={savingWH} onClick={handlePersistWorkingHoursClick}>{savingWH ? 'Saving…' : 'Save Working Hours'}</Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -1420,19 +1680,116 @@ export function ProductionSettings() {
 
                   <div>
                     <Label>Quality Checkpoints</Label>
-                    <div className="space-y-3 mt-2">
-                      {Object.entries(productionRules.qualityControl.qualityCheckpoints).map(([stageId, checkpoint]) => (
-                        <div key={stageId} className="border rounded-lg p-3">
+                    {/* Add new checkpoint */}
+                    <div className="border rounded-lg p-3 mt-2 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <Label className="text-xs">Decoration Method</Label>
+                          <Select
+                            value={qcNew.methodId}
+                            onValueChange={(v) => setQcNew(prev => ({ ...prev, methodId: v, stageId: '' }))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select method" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {decorationMethods.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Stage</Label>
+                          <Select
+                            value={qcNew.stageId}
+                            onValueChange={(v) => setQcNew(prev => ({ ...prev, stageId: v }))}
+                            disabled={!qcNew.methodId}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={qcNew.methodId ? 'Select stage' : 'Select method first'} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(decorationMethods.find(m => m.id === qcNew.methodId)?.stages || []).map((st) => (
+                                <SelectItem key={st.id} value={st.id}>{st.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex items-end">
+                          <Button onClick={handleAddQcCheckpoint} disabled={!qcNew.methodId || !qcNew.stageId || qcNew.items.length === 0}>Add Checkpoint</Button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="md:col-span-2">
+                          <Label className="text-xs">Checklist item</Label>
+                          <div className="flex gap-2 mt-1">
+                            <Input value={qcNew.itemInput} onChange={(e) => setQcNew(prev => ({ ...prev, itemInput: e.target.value }))} placeholder="e.g., Verify registration" />
+                            <Button variant="outline" type="button" onClick={handleAddQcItemToNew}>Add</Button>
+                          </div>
+                          {qcNew.items.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {qcNew.items.map((it, idx) => (
+                                <Badge key={idx} variant="secondary" className="gap-1">
+                                  {it}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Existing checkpoints */}
+                    <div className="space-y-3 mt-4">
+                      {qcEntries.length === 0 && (
+                        <div className="text-sm text-muted-foreground">No checkpoints defined yet</div>
+                      )}
+                      {qcEntries.map((row) => (
+                        <div key={row.key} className="border rounded-lg p-3">
                           <div className="flex items-center justify-between mb-2">
-                            <Label className="capitalize">{stageId.replace('_', ' ')}</Label>
-                            <Switch 
-                              checked={checkpoint.enabled}
-                              onCheckedChange={(checked) => updateProductionRules(`qualityControl.qualityCheckpoints.${stageId}.enabled`, checked)}
-                            />
+                            <div className="flex items-center gap-2">
+                              <Label className="capitalize">
+                                {row.key.includes('.')
+                                  ? (() => { const [m, s] = row.key.split('.'); const mLbl = decorationMethods.find(mm => mm.id === m)?.label || m; const sLbl = decorationMethods.find(mm => mm.id === m)?.stages.find(ss => ss.id === s)?.name || s; return `${mLbl} — ${sLbl}`; })()
+                                  : row.key.replace('_', ' ')
+                                }
+                              </Label>
+                              <Badge variant={row.enabled ? 'default' : 'secondary'}>{row.enabled ? 'Enabled' : 'Disabled'}</Badge>
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            {checkpoint.checklistItems.join(' • ')}
+                            <div className="flex items-center gap-2">
+                              <Button variant="outline" size="sm" onClick={() => handleToggleQcCheckpoint(row.key, !row.enabled)}>{row.enabled ? 'Disable' : 'Enable'}</Button>
+                              <Button variant="outline" size="sm" onClick={() => handleRemoveQcCheckpoint(row.key)}>Remove</Button>
                           </div>
+                        </div>
+                          <div className="text-xs text-muted-foreground mb-2">
+                            {(row.checklistItems || []).length === 0 ? 'No checklist items' : (row.checklistItems || []).join(' • ')}
+                          </div>
+                          <div className="flex gap-2">
+                            <Input placeholder="Add item" onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const target = e.target as HTMLInputElement;
+                                const val = (target.value || '').trim();
+                                if (val) { handleAddQcItemToExisting(row.key, val); target.value = ''; }
+                              }
+                            }} />
+                            <Button variant="outline" type="button" onClick={(e) => {
+                              const wrap = (e.currentTarget.previousSibling as HTMLInputElement);
+                              const val = (wrap?.value || '').trim();
+                              if (val) { handleAddQcItemToExisting(row.key, val); (wrap as any).value = ''; }
+                            }}>Add</Button>
+                          </div>
+                          {(row.checklistItems || []).length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {(row.checklistItems || []).map((it: string, idx: number) => (
+                                <Badge key={idx} variant="secondary" className="gap-1">
+                                  {it}
+                                  <button className="ml-1 text-xs" onClick={() => handleRemoveQcItem(row.key, idx)}>×</button>
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1823,6 +2180,11 @@ export function ProductionSettings() {
               </div>
             </CardContent>
           </Card>
+          <div className="flex justify-end">
+            <Button variant="secondary" disabled={savingRules} onClick={handlePersistProductionRules}>
+              {savingRules ? 'Saving…' : 'Save Rules'}
+            </Button>
+          </div>
         </TabsContent>
       </Tabs>
 

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -9,15 +9,15 @@ import { ModernEmailList } from "@/components/emails/ModernEmailList";
 import { EnhancedEmailDetail } from "@/components/emails/EnhancedEmailDetail";
 import { MultiAccountComposer } from "@/components/emails/MultiAccountComposer";
 import { ConnectEmailDialog } from "@/components/email/ConnectEmailDialog";
-import { mockEmailAccounts, mockEmails } from "@/data/mockEmailAccounts";
+import { supabase } from "@/lib/supabase";
 import type { EmailAccount, Email, EmailComposition } from "@/types/email";
 
 export default function Emails() {
   const { toast } = useToast();
   
   // State
-  const [accounts, setAccounts] = useState<EmailAccount[]>(mockEmailAccounts);
-  const [emails, setEmails] = useState<Email[]>(mockEmails);
+  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  const [emails, setEmails] = useState<Email[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
@@ -187,6 +187,132 @@ export default function Emails() {
   const handleAddAccount = () => {
     setShowConnectDialog(true);
   };
+
+  // Load connected accounts and recent messages
+  useEffect(() => {
+    const load = async () => {
+      // fetch accounts
+      const { data: accs, error: accErr } = await supabase
+        .from('email_accounts')
+        .select('id,email,provider,connected_at');
+      console.log('[Emails] load accounts:', { count: (accs||[]).length, error: accErr });
+      const mapped: EmailAccount[] = (accs || []).map((a: any) => ({
+        id: a.id,
+        email: a.email,
+        provider: 'gmail',
+        isConnected: true,
+        status: 'online',
+        unreadCount: 0,
+        displayName: a.email,
+      }));
+      setAccounts(mapped);
+
+      if ((accs || []).length > 0) {
+        // Prefer the account that already has the most recent message
+        let active = (accs as any[])[0].id as string;
+        try {
+          const { data: recent } = await supabase
+            .from('email_messages')
+            .select('account_id')
+            .order('date', { ascending: false })
+            .limit(1);
+          if (recent && recent.length > 0 && recent[0]?.account_id) {
+            active = recent[0].account_id as string;
+          }
+        } catch {}
+        setSelectedAccountId(active);
+        await loadMessagesForAccount(active);
+      }
+    };
+    load();
+  }, []);
+
+  // Helper: load messages for a given account and trigger sync if empty
+  const loadMessagesForAccount = async (accountId: string) => {
+    const { data: msgs, error: selErr } = await supabase
+      .from('email_messages')
+      .select('provider_msg_id,account_id,subject,from:from,date,body_text,body_html')
+      .eq('account_id', accountId)
+      .order('date', { ascending: false })
+      .limit(50);
+    console.log('[Emails] fetched messages:', { accountId, count: (msgs||[]).length, error: selErr, sample: (msgs||[])[0] });
+    if (!msgs || msgs.length === 0) {
+      try {
+        await supabase.functions.invoke('email-sync', { body: { account_id: accountId, lookback: '90' } });
+        // Poll for results with backoff (up to ~10s)
+        const wait = (ms: number) => new Promise(res => setTimeout(res, ms));
+        const attempts = [1500, 2000, 2500, 3000];
+        for (const delay of attempts) {
+          await wait(delay);
+          const { data: msgs2, error: selErr2 } = await supabase
+            .from('email_messages')
+            .select('provider_msg_id,account_id,subject,from:from,date,body_text,body_html')
+            .eq('account_id', accountId)
+            .order('date', { ascending: false })
+            .limit(50);
+          console.log('[Emails] post-sync poll:', { accountId, delay, count: (msgs2||[]).length, error: selErr2 });
+          if (msgs2 && msgs2.length > 0) {
+            const mapped2: Email[] = (msgs2 as any[]).map((m: any) => ({
+              id: m.provider_msg_id,
+              accountId: m.account_id,
+              from: (() => {
+                const raw = m.from;
+                if (raw && typeof raw === 'object') return { email: raw.email || String(raw || ''), name: raw.name || String(raw || '') };
+                const s = String(raw || '');
+                const match = s.match(/<([^>]+)>/);
+                return { email: match ? match[1] : s, name: s.replace(/<[^>]+>/g,'').trim() };
+              })(),
+              to: [],
+              subject: m.subject || '(no subject)',
+              content: m.body_text || '',
+              htmlContent: m.body_html || undefined,
+              date: m.date,
+              read: true,
+              starred: false,
+              folder: 'inbox',
+              labels: [],
+              attachments: [],
+              messageId: m.provider_msg_id,
+            }));
+            setEmails(mapped2);
+            if (mapped2.length > 0) setSelectedEmailId(mapped2[0].id);
+            break;
+          }
+        }
+      } catch {}
+    } else {
+      const mappedEmails: Email[] = (msgs as any[]).map((m: any) => ({
+        id: m.provider_msg_id,
+        accountId: m.account_id,
+        from: (() => {
+          const raw = m.from;
+          if (raw && typeof raw === 'object') return { email: raw.email || String(raw || ''), name: raw.name || String(raw || '') };
+          const s = String(raw || '');
+          const match = s.match(/<([^>]+)>/);
+          return { email: match ? match[1] : s, name: s.replace(/<[^>]+>/g,'').trim() };
+        })(),
+        to: [],
+        subject: m.subject || '(no subject)',
+        content: m.body_text || '',
+        htmlContent: m.body_html || undefined,
+        date: m.date,
+        read: true,
+        starred: false,
+        folder: 'inbox',
+        labels: [],
+        attachments: [],
+        messageId: m.provider_msg_id,
+      }));
+      setEmails(mappedEmails);
+      if (mappedEmails.length > 0) setSelectedEmailId(mappedEmails[0].id);
+    }
+  };
+
+  // When the user switches accounts, load that account's messages and trigger sync if empty
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    loadMessagesForAccount(selectedAccountId);
+  }, [selectedAccountId]);
 
   return (
     <div className="h-full flex">

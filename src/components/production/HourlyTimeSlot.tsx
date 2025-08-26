@@ -24,6 +24,7 @@ interface HourlyTimeSlotProps {
   jobs: ImprintJob[];
   allJobs: ImprintJob[];
   selectedDate: Date;
+  selectedStage?: string;
   onJobSchedule: (jobId: string, equipmentId: string, startTime: Date, endTime: Date) => void;
   onJobUnschedule: (jobId: string) => void;
   onStageAdvance: (jobId: string) => void;
@@ -33,6 +34,8 @@ interface HourlyTimeSlotProps {
   onJobBlockToggle?: (jobId: string, block: boolean) => void;
   onJobReopen?: (jobId: string) => void;
   onJobClick?: (job: ImprintJob) => void;
+  // Optional virtual rendering mode for special lanes
+  virtualMode?: 'unscheduled';
 }
 
 export function HourlyTimeSlot({ 
@@ -41,6 +44,7 @@ export function HourlyTimeSlot({
   jobs,
   allJobs,
   selectedDate,
+  selectedStage,
   onJobSchedule,
   onJobUnschedule,
   onStageAdvance,
@@ -49,9 +53,11 @@ export function HourlyTimeSlot({
   onJobMarkDone,
   onJobBlockToggle,
   onJobReopen,
-  onJobClick
+  onJobClick,
+  virtualMode
 }: HourlyTimeSlotProps) {
   const [isDragOver, setIsDragOver] = useState(false);
+  const DEBUG_LOGS = false;
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -60,23 +66,32 @@ export function HourlyTimeSlot({
     try {
       const jobData = e.dataTransfer.getData("application/json");
       if (!jobData) {
-        console.warn("No job data in drag transfer");
+        console.warn("[DnD] No job data in drag transfer");
         return;
       }
 
       const job = JSON.parse(jobData) as ImprintJob & { isScheduledMove?: boolean };
-      console.log("Dropping job:", job.jobNumber, "onto equipment:", equipment.name, "at hour:", timeSlot.hour);
+      if (DEBUG_LOGS) console.log("[DnD] drop", { jobId: job.id, jobNumber: job.jobNumber, equipmentId: equipment.id, equipmentName: equipment.name, hour: timeSlot.hour, selectedStage });
+      
+      // In virtual unscheduled lanes, dropping should unschedule rather than schedule
+      if (virtualMode === 'unscheduled') {
+        onJobUnschedule(job.id);
+        return;
+      }
       
       // Simplify to start-of-hour scheduling
       const startTime = new Date(selectedDate);
       startTime.setHours(timeSlot.hour, 0, 0, 0);
       const endTime = new Date(startTime);
-      endTime.setTime(endTime.getTime() + (job.estimatedHours * 60 * 60 * 1000));
+      const perStage = (job as any).stageDurations && selectedStage ? Number((job as any).stageDurations[selectedStage] || 0) : 0;
+      const hours = perStage > 0 ? perStage : (Number(job.estimatedHours) > 0 ? Number(job.estimatedHours) : 1); // fallback to 1h to ensure drop works
+      endTime.setTime(endTime.getTime() + (hours * 60 * 60 * 1000));
       
-      console.log("Scheduling from:", startTime.toLocaleTimeString(), "to:", endTime.toLocaleTimeString());
+      if (DEBUG_LOGS) console.log("[DnD] scheduling window", { start: startTime.toISOString(), end: endTime.toISOString(), hours });
       onJobSchedule(job.id, equipment.id, startTime, endTime);
+      if (DEBUG_LOGS) console.debug('[Stage] scheduled for stage', { selectedStage, jobId: job.id, startTime, endTime });
     } catch (error) {
-      console.error("Error handling job drop:", error);
+      console.error("[DnD] Error handling job drop:", error);
     }
   };
 
@@ -84,12 +99,14 @@ export function HourlyTimeSlot({
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     setIsDragOver(true);
+    if (DEBUG_LOGS) console.debug('[DnD] dragover', { hour: timeSlot.hour, equipmentId: equipment.id });
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     // Only clear if we're truly leaving the drop zone
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setIsDragOver(false);
+      if (DEBUG_LOGS) console.debug('[DnD] dragleave', { hour: timeSlot.hour, equipmentId: equipment.id });
     }
   };
 
@@ -116,11 +133,28 @@ export function HourlyTimeSlot({
 
   // Calculate job positions and detect overlaps
   const jobsWithTiming = jobs.map(job => {
+    // Virtual unscheduled lane: show as blocks sized by estimated hours
+    if (virtualMode === 'unscheduled') {
+      const hours = Math.max(1, Math.round(Number(job.estimatedHours || 1)));
+      return { job, startMinutes: 0, endMinutes: hours * 60 };
+    }
     if (!job.scheduledStart) return null;
     
-    const startMinutes = job.scheduledStart.getMinutes();
-    const durationMinutes = job.estimatedHours * 60;
-    const endMinutes = startMinutes + durationMinutes;
+    // Compute minutes within this hour, and allow spanning beyond
+    const start = new Date(job.scheduledStart);
+    const end = job.scheduledEnd ? new Date(job.scheduledEnd) : (() => {
+      const perStage = selectedStage ? Number((job as any).stageDurations?.[selectedStage] || 0) : 0;
+      const hours = perStage > 0 ? perStage : (Number(job.estimatedHours) > 0 ? Number(job.estimatedHours) : 1);
+      return new Date(start.getTime() + Math.round(hours * 60) * 60000);
+    })();
+    const slotStart = new Date(selectedDate);
+    slotStart.setHours(timeSlot.hour, 0, 0, 0);
+    const slotEnd = new Date(slotStart);
+    slotEnd.setHours(slotStart.getHours() + 1);
+    const overlapStart = Math.max(0, Math.round((Math.max(start.getTime(), slotStart.getTime()) - slotStart.getTime()) / 60000));
+    const overlapEnd = Math.max(0, Math.round((Math.min(end.getTime(), slotEnd.getTime()) - slotStart.getTime()) / 60000));
+    const startMinutes = overlapStart;
+    const endMinutes = overlapEnd > overlapStart ? overlapEnd : overlapStart + Math.round(Math.max(1, (Number(job.estimatedHours || 1) * 60)));
     
     return { job, startMinutes, endMinutes };
   }).filter(Boolean);
@@ -129,7 +163,7 @@ export function HourlyTimeSlot({
 
   // Calculate positioned jobs with column layout
   const positionedJobs = columns.map(({ job, startMinutes, endMinutes, column }) => {
-    const durationMinutes = job.estimatedHours * 60;
+    const durationMinutes = Math.max(0, endMinutes - startMinutes);
     
     // Position within the hour (0-100%)
     const topPercent = (startMinutes / 60) * 100;
@@ -144,12 +178,9 @@ export function HourlyTimeSlot({
     
     // Fix "Continues..." logic: Only show if job actually extends beyond current hour boundary
     // Check if the job's visual representation extends beyond this hour slot
-    const jobStartsInThisHour = job.scheduledStart.getHours() === timeSlot.hour;
-    const jobDurationInThisHour = jobStartsInThisHour ? 
-      Math.min(durationMinutes, 60 - startMinutes) : 0;
-    
-    // Only show "Continues..." if this job starts in this hour but extends beyond it
-    const spansNextHour = jobStartsInThisHour && (startMinutes + durationMinutes) > 60;
+    const jobStartsInThisHour = !!job.scheduledStart && job.scheduledStart.getHours() === timeSlot.hour;
+    // Display continuation when the visual span leaves the hour
+    const spansNextHour = (startMinutes + durationMinutes) > 60;
     
     return {
       job,

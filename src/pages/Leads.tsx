@@ -10,7 +10,8 @@ import EditLeadDialog from '@/components/leads/EditLeadDialog';
 import { Lead, LeadColumn, LeadStatus } from '@/types/lead';
 
 const initialLeads: Lead[] = [
-  {
+  /* removed demo leads */
+  /* {
     id: 'pamela-hunt',
     name: 'Pamela Hunt',
     company: 'Western Alliance Transport',
@@ -50,7 +51,7 @@ const initialLeads: Lead[] = [
     totalActivities: 6,
     lastActivityType: 'email',
     quoteId: '3046'
-  },
+  }, */
   {
     id: '1',
     name: 'John Smith',
@@ -496,16 +497,7 @@ const columns: LeadColumn[] = [
 
 export default function Leads() {
   const [leads, setLeads] = useState<Lead[]>(initialLeads);
-  const [boardColumns, setBoardColumns] = useState<LeadColumn[]>(() => {
-    const updatedColumns = [...columns];
-    leads.forEach(lead => {
-      const columnIndex = updatedColumns.findIndex(col => col.id === lead.status);
-      if (columnIndex !== -1) {
-        updatedColumns[columnIndex].leads.push(lead);
-      }
-    });
-    return updatedColumns;
-  });
+  const [boardColumns, setBoardColumns] = useState<LeadColumn[]>(columns);
   
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeLead, setActiveLead] = useState<Lead | null>(null);

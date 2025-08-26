@@ -12,7 +12,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 // Auth helper functions
 export const auth = {
   signUp: async (email: string, password: string, fullName: string, companyName: string) => {
-    const { data, error } = await supabase.auth.signUp({
+    // Try with metadata, then fallback to minimal, then ensure org
+    let { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -22,6 +23,14 @@ export const auth = {
         },
       },
     })
+    if (error) {
+      const minimal = await supabase.auth.signUp({ email, password })
+      data = minimal.data
+      error = minimal.error
+    }
+    if (!error) {
+      try { await supabase.rpc('ensure_user_org', { p_company_name: companyName, p_full_name: fullName }) } catch {}
+    }
     return { data, error }
   },
 

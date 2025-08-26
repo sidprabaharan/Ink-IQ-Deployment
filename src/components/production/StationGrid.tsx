@@ -19,6 +19,7 @@ interface StationGridProps {
   jobs: ImprintJob[];
   allJobs: ImprintJob[]; // All jobs for dependency checking
   selectedDate: Date;
+  selectedStage?: string;
   onJobSchedule: (jobId: string, equipmentId: string, startTime: Date, endTime: Date) => void;
   onJobUnschedule: (jobId: string) => void;
   onStageAdvance: (jobId: string) => void;
@@ -28,6 +29,8 @@ interface StationGridProps {
   onJobBlockToggle?: (jobId: string, block: boolean) => void;
   onJobReopen?: (jobId: string) => void;
   onJobClick?: (job: ImprintJob) => void;
+  // Optional virtual rendering mode for special lanes
+  virtualMode?: 'unscheduled';
 }
 
 export function StationGrid({ 
@@ -35,6 +38,7 @@ export function StationGrid({
   jobs,
   allJobs,
   selectedDate,
+  selectedStage,
   onJobSchedule,
   onJobUnschedule,
   onStageAdvance,
@@ -43,7 +47,8 @@ export function StationGrid({
   onJobMarkDone,
   onJobBlockToggle,
   onJobReopen,
-  onJobClick
+  onJobClick,
+  virtualMode
 }: StationGridProps) {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -60,7 +65,10 @@ export function StationGrid({
   });
 
   // Filter jobs for this equipment
-  const equipmentJobs = jobs.filter(job => job.equipmentId === equipment.id);
+  const equipmentJobs = virtualMode === 'unscheduled'
+    ? jobs // show provided unscheduled jobs regardless of equipment
+    : jobs.filter(job => job.equipmentId === equipment.id);
+  console.debug('[DnD] StationGrid render', { equipmentId: equipment.id, name: equipment.name, jobs: equipmentJobs.length, selectedStage });
   
   // Calculate utilization
   const totalScheduledHours = equipmentJobs.reduce((sum, job) => sum + job.estimatedHours, 0);
@@ -97,11 +105,28 @@ export function StationGrid({
       <CollapsibleContent className="border-t border-border">
         <div className="w-full">
           {timeSlots.map(timeSlot => {
-            // Filter jobs that start in this hour
+            // Hour window for overlap checks
+            const slotStart = new Date(selectedDate);
+            slotStart.setHours(timeSlot.hour, 0, 0, 0);
+            const slotEnd = new Date(slotStart);
+            slotEnd.setHours(slotStart.getHours() + 1);
+
+            // Filter jobs that overlap this hour window
             const slotJobs = equipmentJobs.filter(job => {
+              // Virtual unscheduled lane: render all unscheduled jobs only in the first hour block
+              if (virtualMode === 'unscheduled') {
+                return !job.scheduledStart && timeSlot.hour === 8;
+              }
               if (!job.scheduledStart) return false;
-              const jobStartHour = job.scheduledStart.getHours();
-              return jobStartHour === timeSlot.hour;
+              const start = new Date(job.scheduledStart);
+              let end: Date | undefined = job.scheduledEnd ? new Date(job.scheduledEnd) : undefined;
+              if (!end) {
+                const perStage = selectedStage ? Number((job as any).stageDurations?.[selectedStage] || 0) : 0;
+                const hours = perStage > 0 ? perStage : (Number(job.estimatedHours) > 0 ? Number(job.estimatedHours) : 1);
+                end = new Date(start.getTime() + Math.round(hours * 60) * 60000);
+              }
+              // Overlap if job starts before slot end and ends after slot start
+              return start < slotEnd && end > slotStart;
             });
 
             return (
@@ -112,6 +137,7 @@ export function StationGrid({
                 jobs={slotJobs}
                 allJobs={allJobs}
                 selectedDate={selectedDate}
+                selectedStage={selectedStage}
                 onJobSchedule={onJobSchedule}
                 onJobUnschedule={onJobUnschedule}
                 onStageAdvance={onStageAdvance}
@@ -121,6 +147,9 @@ export function StationGrid({
                 onJobBlockToggle={onJobBlockToggle}
                 onJobReopen={onJobReopen}
                 onJobClick={onJobClick}
+                // In virtual mode, render draggable unscheduled-style cards and unschedule on drop
+                // @ts-expect-error: extra prop consumed internally
+                virtualMode={virtualMode}
               />
             );
           })}

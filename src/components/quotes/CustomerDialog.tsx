@@ -35,6 +35,17 @@ export function CustomerDialog({ open, onOpenChange }: CustomerDialogProps) {
   const [jobTitle, setJobTitle] = useState("");
   const [department, setDepartment] = useState("");
   
+  // Phone formatting helpers
+  const onlyDigits = (s: string) => (s || '').replace(/\D+/g, '');
+  const formatPhone = (raw: string) => {
+    const digits = onlyDigits(raw);
+    let d = digits;
+    if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
+    if (d.length <= 3) return d;
+    if (d.length <= 6) return `(${d.slice(0,3)}) ${d.slice(3)}`;
+    return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6,10)}`;
+  };
+  
   // Billing address
   const [billingAddress1, setBillingAddress1] = useState("");
   const [billingAddress2, setBillingAddress2] = useState("");
@@ -248,17 +259,19 @@ export function CustomerDialog({ open, onOpenChange }: CustomerDialogProps) {
                 <div>
                   <label className="block text-sm mb-1">Phone Number</label>
                   <Input 
-                    placeholder="Phone Number"
+                    placeholder="(555) 555-5555"
                     value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    onChange={(e) => setPhoneNumber(formatPhone(e.target.value))}
+                    onBlur={() => setPhoneNumber((v) => formatPhone(v))}
                   />
                 </div>
                 <div>
                   <label className="block text-sm mb-1">Fax Number</label>
                   <Input 
-                    placeholder="Enter Fax Number"
+                    placeholder="(555) 555-5555"
                     value={faxNumber}
-                    onChange={(e) => setFaxNumber(e.target.value)}
+                    onChange={(e) => setFaxNumber(formatPhone(e.target.value))}
+                    onBlur={() => setFaxNumber((v) => formatPhone(v))}
                   />
                 </div>
               </div>

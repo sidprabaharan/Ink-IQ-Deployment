@@ -1,6 +1,7 @@
 import { StationGrid } from "./StationGrid";
 import { ImprintJob } from "@/types/imprint-job";
 import { DecorationMethod, ProductionStage } from "./PrintavoPowerScheduler";
+import { useOrganization } from "@/context/OrganizationContext";
 
 interface SchedulingGridProps {
   jobs: ImprintJob[];
@@ -93,7 +94,94 @@ export function SchedulingGrid({
   onJobReopen,
   onJobClick
 }: SchedulingGridProps) {
-  const equipment = equipmentConfig[selectedMethod]?.[selectedStage] || [];
+  const { organization } = useOrganization();
+  // Normalize ids to broaden matching across custom configurations, but scoped per method
+  const norm = (s: string) => (s || '')
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/-/g, '_');
+  const normalizeMethodId = (id: string) => (id || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/\s+/g, '_')
+    .replace(/-/g, '_')
+    .toLowerCase();
+  const toTitle = (s: string) => (s || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1));
+  const methodKey = selectedMethod as keyof typeof equipmentConfig;
+  const stageKey = selectedStage as keyof (typeof equipmentConfig)[typeof methodKey];
+  // Prefer org-configured equipment lanes if available
+  const orgEquipment = ((organization as any)?.org_settings?.production?.equipment as Array<any>) || [];
+  const preferred = orgEquipment
+    .filter((eq: any) => Array.isArray(eq?.stageAssignments) && eq.stageAssignments.some((sa: any) => {
+      const saMethod = normalizeMethodId(sa?.decorationMethod || '');
+      const methodMatches = saMethod === (methodKey as string);
+      const stageMatches = Array.isArray(sa?.stageIds) && sa.stageIds.includes(selectedStage as string);
+      return methodMatches && stageMatches;
+    }))
+    .map((eq: any) => ({
+      id: String(eq.id || `${methodKey}-${stageKey}-${Math.random().toString(36).slice(2)}`),
+      name: String(eq.name || toTitle(String(eq.type || 'Work Cell'))),
+      capacity: Number(eq.capacity || 100),
+      type: String(eq.type || 'Work Cell'),
+    }));
+
+  let equipment = (preferred && preferred.length)
+    ? preferred
+    : (equipmentConfig as any)[methodKey]?.[stageKey] || [];
+  if (!equipment.length) {
+    const ns = norm(selectedStage as string);
+    switch (methodKey) {
+      case 'screen_printing': {
+        if (/burn/.test(ns) || /screen/.test(ns)) {
+          equipment = (equipmentConfig as any).screen_printing?.burn_screens || [];
+        } else if (/mix/.test(ns) || /ink/.test(ns)) {
+          equipment = (equipmentConfig as any).screen_printing?.mix_ink || [];
+        } else if (/print/.test(ns)) {
+          equipment = (equipmentConfig as any).screen_printing?.print || [];
+        }
+        // Strong fallback: always show Screen Room lanes if still empty
+        if (!equipment.length) {
+          equipment = (equipmentConfig as any).screen_printing?.burn_screens || [
+            { id: "screen-room-1", name: "Screen Room A", capacity: 20, type: "Screen Station" },
+            { id: "screen-room-2", name: "Screen Room B", capacity: 20, type: "Screen Station" }
+          ];
+        }
+        break;
+      }
+      case 'dtf': {
+        if (/design/.test(ns) || /art/.test(ns)) {
+          equipment = (equipmentConfig as any).dtf?.design_file || [];
+        } else if (/(^|_)dtf(_|$)/.test(ns) || /print/.test(ns)) {
+          equipment = (equipmentConfig as any).dtf?.dtf_print || [];
+        } else if (/powder/.test(ns)) {
+          equipment = (equipmentConfig as any).dtf?.powder || [];
+        } else if (/cure/.test(ns) || /oven/.test(ns) || /bake/.test(ns)) {
+          equipment = (equipmentConfig as any).dtf?.cure || [];
+        }
+        break;
+      }
+      case 'dtg': {
+        if (/pretreat/.test(ns) || /pre_treat/.test(ns)) {
+          equipment = (equipmentConfig as any).dtg?.pretreat || [];
+        } else if (/print/.test(ns)) {
+          equipment = (equipmentConfig as any).dtg?.dtg_print || [];
+        } else if (/cure/.test(ns) || /oven/.test(ns)) {
+          equipment = (equipmentConfig as any).dtg?.dtg_cure || [];
+        }
+        break;
+      }
+      default:
+        // Generic fallback for custom methods: provide two lanes based on method and stage
+        equipment = [
+          { id: `${methodKey}-${stageKey}-1`, name: `${toTitle(methodKey as string)} ${toTitle(stageKey as string)} 1`, capacity: 100, type: 'Work Cell' },
+          { id: `${methodKey}-${stageKey}-2`, name: `${toTitle(methodKey as string)} ${toTitle(stageKey as string)} 2`, capacity: 100, type: 'Work Cell' },
+        ];
+        break;
+    }
+  }
 
   return (
     <div className="flex-1 overflow-auto bg-background p-4">
@@ -110,6 +198,7 @@ export function SchedulingGrid({
               jobs={jobs}
               allJobs={allJobs}
               selectedDate={selectedDate}
+              selectedStage={selectedStage}
               onJobSchedule={onJobSchedule}
               onJobUnschedule={onJobUnschedule}
               onStageAdvance={onStageAdvance}

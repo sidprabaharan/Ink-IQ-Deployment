@@ -43,7 +43,8 @@ export function ImprintDialog({ open, onOpenChange, onSave, initialImprints = []
           notes: "",
           customerArt: [],
           productionFiles: [],
-          proofMockup: []
+          proofMockup: [],
+          stageDurations: {}
         }]
       );
     }
@@ -60,7 +61,8 @@ export function ImprintDialog({ open, onOpenChange, onSave, initialImprints = []
       notes: "",
       customerArt: [],
       productionFiles: [],
-      proofMockup: []
+      proofMockup: [],
+      stageDurations: {}
     }]);
   };
 
@@ -292,6 +294,41 @@ export function ImprintDialog({ open, onOpenChange, onSave, initialImprints = []
                       onChange={(e) => handleImprintChange(index, "colorsOrThreads", e.target.value)}
                       placeholder="e.g., Black, White, Navy Blue | Thread colors: 5563, 5606"
                     />
+                  </div>
+
+                  {/* Stage Durations (per method) */}
+                  <div>
+                    <Label className="text-sm font-medium">Stage Durations (hours)</Label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                      {(() => {
+                        const methodToStages: Record<string, string[]> = {
+                          screen_print: ['burn_screens','mix_ink','print'],
+                          embroidery: ['digitize','hoop','embroider'],
+                          dtf: ['design_file','dtf_print','powder','cure'],
+                          dtg: ['pretreat','dtg_print','dtg_cure'],
+                        };
+                        const stages = methodToStages[imprint.method] || [];
+                        if (!stages.length) return null;
+                        return stages.map((s) => (
+                          <div key={s} className="space-y-1">
+                            <div className="text-xs text-muted-foreground">{s.replace(/_/g,' ')}</div>
+                            <Input
+                              type="number"
+                              step="0.25"
+                              min="0"
+                              value={(imprint as any).stageDurations?.[s] ?? 0}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value);
+                                const next = { ...((imprint as any).stageDurations || {}), [s]: isNaN(v) ? 0 : v };
+                                const updated = [...imprints];
+                                updated[index] = { ...imprint, stageDurations: next } as any;
+                                setImprints(updated);
+                              }}
+                            />
+                          </div>
+                        ));
+                      })()}
+                    </div>
                   </div>
 
                   {/* Notes */}

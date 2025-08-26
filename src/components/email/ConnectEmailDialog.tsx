@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Mail, MailPlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
 import {
   Dialog,
   DialogContent,
@@ -26,19 +27,25 @@ export function ConnectEmailDialog({ open, onOpenChange }: ConnectEmailDialogPro
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  const handleConnect = (provider: string) => {
-    setLoading(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      setLoading(false);
-      onOpenChange(false);
-      
-      toast({
-        title: "Email connected",
-        description: `Your ${provider} account has been successfully connected.`,
+  const handleConnect = async (provider: string) => {
+    if (provider !== "Gmail") return;
+    try {
+      setLoading(true);
+      const lookback = '90';
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token || '';
+      const { data: resp, error } = await supabase.functions.invoke('gmail-oauth', {
+        body: { step: 'start_url', lookback, token },
       });
-    }, 1500);
+      if (error) {
+        throw error;
+      }
+      const authUrl = (resp as any)?.authUrl as string;
+      if (!authUrl) throw new Error('No authUrl returned');
+      window.location.href = authUrl;
+    } catch {
+      setLoading(false);
+    }
   };
 
   const handleManualConnect = (e: React.FormEvent) => {

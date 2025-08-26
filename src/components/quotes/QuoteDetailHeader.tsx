@@ -55,8 +55,8 @@ export function QuoteDetailHeader({
   const [showDecoratorSelection, setShowDecoratorSelection] = useState(false);
   const [showProductionScheduling, setShowProductionScheduling] = useState(false);
   
-  const isInvoice = !status.toLowerCase().startsWith('quote');
-  const documentType = isInvoice ? "Invoice" : "Quote";
+  // Always treat this page as a Quote
+  const documentType = "Quote";
   
   const handleDuplicate = () => {
     toast({
@@ -144,17 +144,6 @@ export function QuoteDetailHeader({
     console.log('🔍 [DEBUG] HandleDelete - Status:', status);
     console.log('🔍 [DEBUG] HandleDelete - DocumentType:', documentType);
     
-    // Only allow deletion of draft quotes
-    if (status !== 'draft') {
-      console.log('🔍 [DEBUG] HandleDelete - Status is not draft, blocking deletion');
-      toast({
-        title: "Cannot delete quote",
-        description: "Only draft quotes can be deleted",
-        variant: "destructive"
-      });
-      return;
-    }
-
     // Show confirmation dialog
     const confirmed = window.confirm(
       `Are you sure you want to delete ${documentType} #${quoteNumber || quoteId}? This action cannot be undone.`
@@ -341,12 +330,10 @@ export function QuoteDetailHeader({
               <Copy className="h-4 w-4 mr-2" />
               Duplicate
             </DropdownMenuItem>
-            {status === 'draft' && (
-              <DropdownMenuItem onClick={handleDelete} className="text-red-600 focus:text-red-600 focus:bg-red-50">
-                <Trash className="h-4 w-4 mr-2" />
-                Delete {documentType}
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuItem onClick={handleDelete} className="text-red-600 focus:text-red-600 focus:bg-red-50">
+              <Trash className="h-4 w-4 mr-2" />
+              Delete {documentType}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
