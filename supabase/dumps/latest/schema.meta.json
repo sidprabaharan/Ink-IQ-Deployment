@@ -1,0 +1,85 @@
+{
+  "project_ref": "eqdlaagjaikxdrkgvopn",
+  "generated_at": "2025-08-30T14:45:00Z",
+  "tables": [
+    {
+      "schema": "public",
+      "name": "library_imprint_customers",
+      "rls_enabled": true,
+      "rows": 0,
+      "columns": [
+        {"name": "id", "data_type": "uuid", "format": "uuid", "options": ["updatable"], "default_value": "gen_random_uuid()"},
+        {"name": "library_imprint_id", "data_type": "uuid", "format": "uuid", "options": ["updatable"]},
+        {"name": "customer_id", "data_type": "uuid", "format": "uuid", "options": ["updatable"]}
+      ],
+      "primary_keys": ["id"],
+      "foreign_key_constraints": [
+        {"name": "library_imprint_customers_customer_id_fkey", "source": "public.library_imprint_customers.customer_id", "target": "public.customers.id"},
+        {"name": "library_imprint_customers_library_imprint_id_fkey", "source": "public.library_imprint_customers.library_imprint_id", "target": "public.library_imprints.id"}
+      ]
+    },
+    {
+      "schema": "public",
+      "name": "email_oauth_tokens",
+      "rls_enabled": true,
+      "rows": 2,
+      "columns": [
+        {"name": "account_id", "data_type": "uuid", "format": "uuid", "options": ["updatable"]},
+        {"name": "access_token", "data_type": "text", "format": "text", "options": ["updatable"]},
+        {"name": "refresh_token", "data_type": "text", "format": "text", "options": ["updatable"]},
+        {"name": "expires_at", "data_type": "timestamp with time zone", "format": "timestamptz", "options": ["updatable"]},
+        {"name": "scopes", "data_type": "ARRAY", "format": "_text", "options": ["updatable"], "default_value": "'{}'::text[]"},
+        {"name": "provider_meta", "data_type": "jsonb", "format": "jsonb", "options": ["updatable"], "default_value": "'{}'::jsonb"}
+      ],
+      "primary_keys": ["account_id"],
+      "foreign_key_constraints": [
+        {"name": "email_oauth_tokens_account_id_fkey", "source": "public.email_oauth_tokens.account_id", "target": "public.email_accounts.id"}
+      ]
+    },
+    {
+      "schema": "public",
+      "name": "artwork_files",
+      "rls_enabled": true,
+      "rows": 0,
+      "columns": [
+        {"name": "id", "data_type": "uuid", "format": "uuid", "options": ["updatable"], "default_value": "gen_random_uuid()"},
+        {"name": "org_id", "data_type": "uuid", "format": "uuid", "options": ["updatable"]},
+        {"name": "quote_item_id", "data_type": "uuid", "format": "uuid", "options": ["nullable", "updatable"]},
+        {"name": "file_name", "data_type": "text", "format": "text", "options": ["updatable"]},
+        {"name": "file_path", "data_type": "text", "format": "text", "options": ["updatable"]},
+        {"name": "file_size", "data_type": "integer", "format": "int4", "options": ["updatable"]},
+        {"name": "file_type", "data_type": "text", "format": "text", "options": ["updatable"]},
+        {"name": "category", "data_type": "text", "format": "text", "options": ["updatable"], "check": "category = ANY (ARRAY['customer_art'::text, 'production_files'::text, 'proof_mockup'::text])"},
+        {"name": "imprint_method", "data_type": "text", "format": "text", "options": ["nullable", "updatable"]},
+        {"name": "imprint_location", "data_type": "text", "format": "text", "options": ["nullable", "updatable"]},
+        {"name": "imprint_size", "data_type": "text", "format": "text", "options": ["nullable", "updatable"]},
+        {"name": "colors_or_threads", "data_type": "text", "format": "text", "options": ["nullable", "updatable"]},
+        {"name": "notes", "data_type": "text", "format": "text", "options": ["nullable", "updatable"]},
+        {"name": "upload_status", "data_type": "text", "format": "text", "options": ["nullable", "updatable"], "default_value": "'uploading'::text", "check": "upload_status = ANY (ARRAY['uploading'::text, 'completed'::text, 'failed'::text])"},
+        {"name": "created_by", "data_type": "uuid", "format": "uuid", "options": ["updatable"]},
+        {"name": "created_at", "data_type": "timestamp with time zone", "format": "timestamptz", "options": ["nullable", "updatable"], "default_value": "now()"},
+        {"name": "updated_at", "data_type": "timestamp with time zone", "format": "timestamptz", "options": ["nullable", "updatable"], "default_value": "now()"},
+        {"name": "library_imprint_id", "data_type": "uuid", "format": "uuid", "options": ["nullable", "updatable"]},
+        {"name": "library_mockup_id", "data_type": "uuid", "format": "uuid", "options": ["nullable", "updatable"]},
+        {"name": "is_library", "data_type": "boolean", "format": "bool", "options": ["nullable", "updatable"], "default_value": "false"}
+      ],
+      "primary_keys": ["id"],
+      "foreign_key_constraints": [
+        {"name": "artwork_files_org_id_fkey", "source": "public.artwork_files.org_id", "target": "public.orgs.id"},
+        {"name": "artwork_files_quote_item_id_fkey", "source": "public.artwork_files.quote_item_id", "target": "public.quote_items.id"},
+        {"name": "artwork_files_created_by_fkey", "source": "public.artwork_files.created_by", "target": "auth.users.id"},
+        {"name": "artwork_files_library_imprint_id_fkey", "source": "public.artwork_files.library_imprint_id", "target": "public.library_imprints.id"},
+        {"name": "artwork_files_library_mockup_id_fkey", "source": "public.artwork_files.library_mockup_id", "target": "public.library_mockups.id"}
+      ]
+    }
+    
+    
+    
+  ],
+  "information_schema_columns": "see repository history for full details via Supabase MCP export",
+  "primary_keys": "exported via Supabase MCP",
+  "foreign_keys": "exported via Supabase MCP",
+  "indexes": "exported via Supabase MCP"
+}
+
+
