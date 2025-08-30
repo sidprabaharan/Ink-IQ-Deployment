@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -7,9 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
+import { useOrganization } from '@/context/OrganizationContext';
 import { CircleCheck, PlusCircle, GripVertical, Pencil, Trash } from 'lucide-react';
 
-// Mock data
+// Local fallback if org settings not yet loaded
 const initialStatuses = [
   { id: 1, name: 'New', color: '#3498db', active: true },
   { id: 2, name: 'Processing', color: '#f39c12', active: true },
@@ -22,12 +23,29 @@ const initialStatuses = [
 ];
 
 export function OrderStatuses() {
+  const { organization, updateOrganizationSettings } = useOrganization();
   const [statuses, setStatuses] = useState(initialStatuses);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<any>(null);
   const [newStatus, setNewStatus] = useState({ name: '', color: '#3498db', active: true });
   const { toast } = useToast();
+
+  // Load from org settings if available
+  useEffect(() => {
+    try {
+      const fromSettings = (organization?.org_settings as any)?.orderStatuses as Array<{ id?: number; name: string; color: string; active?: boolean }> | undefined;
+      if (Array.isArray(fromSettings) && fromSettings.length) {
+        // Ensure IDs
+        const withIds = fromSettings.map((s, idx) => ({ id: s.id || idx + 1, name: s.name, color: s.color || '#3498db', active: s.active !== false }));
+        setStatuses(withIds);
+      }
+    } catch {}
+  }, [organization?.org_settings]);
+
+  const persist = async (next: typeof statuses) => {
+    await updateOrganizationSettings({ orderStatuses: next.map(s => ({ id: s.id, name: s.name, color: s.color, active: s.active })) });
+  };
 
   const handleAddStatus = () => {
     if (!newStatus.name) {
@@ -40,7 +58,9 @@ export function OrderStatuses() {
     }
 
     const id = Math.max(0, ...statuses.map(s => s.id)) + 1;
-    setStatuses([...statuses, { ...newStatus, id }]);
+    const next = [...statuses, { ...newStatus, id }];
+    setStatuses(next);
+    persist(next);
     setNewStatus({ name: '', color: '#3498db', active: true });
     setIsAddOpen(false);
     
@@ -53,9 +73,11 @@ export function OrderStatuses() {
   const handleUpdateStatus = () => {
     if (!currentStatus) return;
     
-    setStatuses(statuses.map(status => 
+    const next = statuses.map(status => 
       status.id === currentStatus.id ? currentStatus : status
-    ));
+    );
+    setStatuses(next);
+    persist(next);
     setIsEditOpen(false);
     
     toast({
@@ -67,7 +89,9 @@ export function OrderStatuses() {
   const handleDeleteStatus = (id: number) => {
     if (window.confirm('Are you sure you want to delete this status?')) {
       const status = statuses.find(s => s.id === id);
-      setStatuses(statuses.filter(status => status.id !== id));
+      const next = statuses.filter(status => status.id !== id);
+      setStatuses(next);
+      persist(next);
       
       toast({
         title: "Status deleted",
@@ -82,9 +106,11 @@ export function OrderStatuses() {
   };
 
   const toggleStatusActive = (id: number) => {
-    setStatuses(statuses.map(status => 
+    const next = statuses.map(status => 
       status.id === id ? { ...status, active: !status.active } : status
-    ));
+    );
+    setStatuses(next);
+    persist(next);
   };
 
   return (

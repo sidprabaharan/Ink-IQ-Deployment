@@ -125,11 +125,12 @@ export function QuoteItemsTable({ itemGroups, quoteId }: QuoteItemsTableProps) {
   const getGarmentDetails = (item: QuoteItem): GarmentDetails => {
     const existingDetails = garmentDetailsMap[item.id] || item.garmentDetails;
     if (existingDetails) {
-      return existingDetails;
+      return { id: item.id, ...existingDetails } as GarmentDetails;
     }
     
     const totalQuantity = getTotalQuantity(item.sizes);
     const defaultDetails: GarmentDetails = {
+      id: item.id,
       status: 'pending',
       stockIssues: [],
       receivedQuantity: 0,

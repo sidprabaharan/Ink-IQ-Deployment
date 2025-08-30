@@ -1,0 +1,12 @@
+verify_jwt = false
+
+[routing]
+method = "POST"
+path = "/automation-dispatcher"
+
+[scheduled]
+crons = [
+  { name = "automation-dispatcher-cron", schedule = "*/2 * * * *" }
+]
+
+

@@ -9,6 +9,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
+    "ss:proxy": "node ./scripts/ss-local-proxy.mjs",
     "db:types": "npx supabase gen types typescript --linked > src/types/database.ts",
     "db:migration": "npx supabase migration new",
     "db:status": "npx supabase migration list",

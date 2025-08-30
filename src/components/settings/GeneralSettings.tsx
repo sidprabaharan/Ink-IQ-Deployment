@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -8,26 +7,38 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Settings, Bell, Lock, Globe, Moon, Sun, Monitor } from 'lucide-react';
+import { useOrganization } from '@/context/OrganizationContext';
 
 export function GeneralSettings() {
   const { toast } = useToast();
-  const [settings, setSettings] = useState({
-    dateFormat: 'MM/DD/YYYY',
-    timeFormat: '12h',
-    timezone: 'America/New_York',
-    language: 'en',
-    theme: 'system',
-    emailNotifications: true,
-    browserNotifications: false,
-    saveLoginInfo: true,
-    twoFactorAuth: false
-  });
+  const { organization, updateOrganizationSettings } = useOrganization();
 
-  const handleSaveSettings = () => {
-    toast({
-      title: "Settings Saved",
-      description: "Your settings have been updated successfully.",
-    });
+  const initial = useMemo(() => {
+    const g = (organization?.org_settings as any)?.general || {};
+    return {
+      dateFormat: g.dateFormat || 'MM/DD/YYYY',
+      timeFormat: g.timeFormat || '12h',
+      timezone: g.timezone || 'America/New_York',
+      language: g.language || 'en',
+      theme: g.theme || 'system',
+      emailNotifications: g.emailNotifications ?? true,
+      browserNotifications: g.browserNotifications ?? false,
+      saveLoginInfo: g.saveLoginInfo ?? true,
+      twoFactorAuth: g.twoFactorAuth ?? false,
+    };
+  }, [organization?.org_id]);
+
+  const [settings, setSettings] = useState(initial);
+
+  useEffect(() => { setSettings(initial); }, [initial]);
+
+  const handleSaveSettings = async () => {
+    const res = await updateOrganizationSettings({ general: settings });
+    if (res.success) {
+      toast({ title: 'Settings Saved', description: 'Your settings have been updated successfully.' });
+    } else {
+      toast({ variant: 'destructive', title: 'Save failed', description: res.error || 'Please try again.' });
+    }
   };
 
   return (

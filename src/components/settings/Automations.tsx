@@ -53,13 +53,14 @@ type SchedulingRule = {
   createdAt?: string;
 };
 
+// Built-in statuses used by the Automations dropdown
 const defaultStatuses = [
   'New',
   'Processing',
   'Artwork Ready',
   'Production',
   'Shipping',
-  'Completed',
+  'Complete',
   'Cancelled',
   'On Hold',
 ];
@@ -229,8 +230,24 @@ export function Automations() {
     setSchedRules(initialSchedulingRules);
   }, [initialStatusRules, initialSchedulingRules]);
 
+  // Seed default rules on first run if none exist
+  useEffect(() => {
+    if ((rules || []).length > 0) return;
+    const starters: StatusChangeRule[] = [
+      { id: `status_${Date.now()}_approved`, name: 'Approved → Email Customer', enabled: true, toStatus: 'Approved', actions: [{ type: 'send_email', params: { recipient: 'customer', template: 'approval_confirmation' } }] as any, createdAt: new Date().toISOString() },
+      { id: `status_${Date.now()}_inprod`, name: 'In Production → Notify Team', enabled: true, toStatus: 'In Production', actions: [{ type: 'create_notification', params: { message: 'Order moved to production' } }] as any, createdAt: new Date().toISOString() },
+      { id: `status_${Date.now()}_completed`, name: 'Complete → Email Customer', enabled: true, toStatus: 'Complete', actions: [{ type: 'send_email', params: { recipient: 'customer', template: 'completion_notice' } }] as any, createdAt: new Date().toISOString() },
+    ];
+    if (starters.length) {
+      setRules(starters);
+      persist(starters);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const persist = async (next: StatusChangeRule[]) => {
     const automations = { ...(organization?.org_settings?.automations || {}), statusChanges: next, schedulingRules: schedRules, mixedWorkflows: mixed, outsourcing, purchaseOrders: poRules, emails: emailAuto, leads: leadAuto, leadWorkflows: leadWork, quotes: quoteAuto };
+    try { console.groupCollapsed('[automations] save'); console.debug('payload', automations); console.groupEnd?.(); } catch {}
     const res = await updateOrganizationSettings({ automations });
     if (!res.success) {
       toast({ variant: 'destructive', title: 'Save failed', description: res.error || 'Please try again.' });
@@ -516,15 +533,15 @@ export function Automations() {
       <div className="flex flex-wrap gap-2 sticky top-0 z-10 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/60 py-2">
         {[
           { key: 'status', label: 'Status Changes' },
-          { key: 'scheduling', label: 'Production Scheduling' },
-          { key: 'mixed', label: 'Mixed Workflows' },
-          { key: 'outsourcing', label: 'Outsourcing' },
-          { key: 'po', label: 'Purchase Orders' },
-          { key: 'emails', label: 'Emails' },
+          { key: 'system', label: 'System Notifications' },
+          { key: 'scheduling', label: 'Scheduling' },
           { key: 'leads', label: 'Leads' },
           { key: 'lead_workflows', label: 'Lead Workflows' },
           { key: 'quotes', label: 'Quotes' },
-          { key: 'system', label: 'System Notifications' },
+          { key: 'emails', label: 'Emails' },
+          { key: 'po', label: 'Purchase Orders' },
+          { key: 'mixed', label: 'Mixed Workflows' },
+          { key: 'outsourcing', label: 'Outsourcing' },
         ].map(({ key, label }) => (
           <button
             key={key}
@@ -563,7 +580,7 @@ export function Automations() {
                 <Select value={newToStatus} onValueChange={setNewToStatus}>
                   <SelectTrigger className="w-full"><SelectValue placeholder="Choose status" /></SelectTrigger>
                   <SelectContent>
-                    {defaultStatuses.map(s => (<SelectItem key={s} value={s}>{s}</SelectItem>))}
+                    {[...defaultStatuses, 'Approved', 'In Production'].filter((v, i, a) => a.indexOf(v) === i).map(s => (<SelectItem key={s} value={s}>{s}</SelectItem>))}
                   </SelectContent>
                 </Select>
               </div>
@@ -677,6 +694,32 @@ export function Automations() {
       </>
       )}
 
+      {activeCategory === 'system' && (
+      <>
+      <Card>
+        <CardHeader>
+          <CardTitle>System Settings</CardTitle>
+          <CardDescription>Global values used by automation actions</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Label>Webhook Signing Secret</Label>
+            <Input
+              value={(organization?.org_settings?.automations?.webhookSecret as string) || ''}
+              onChange={(e)=>{
+                const secret = e.target.value;
+                const next = { ...(organization?.org_settings?.automations || {}), webhookSecret: secret };
+                updateOrganizationSettings({ automations: next });
+              }}
+              placeholder="Set shared secret for outgoing webhooks"
+            />
+            <div className="text-xs text-muted-foreground mt-1">Used to sign outgoing webhooks in header X-InkIQ-Signature</div>
+          </div>
+        </CardContent>
+      </Card>
+      </>
+      )}
+
       {/* Production Scheduling Automations */}
       {activeCategory === 'scheduling' && (
       <>
@@ -701,8 +744,8 @@ export function Automations() {
             }} />
           </DialogContent>
         </Dialog>
-              </div>
-
+      </div>
+      
       <div className="space-y-3">
         {schedRules.length === 0 ? (
           <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">No scheduling rules yet.</CardContent></Card>
@@ -761,13 +804,13 @@ export function Automations() {
       {/* Outsourcing */}
       {activeCategory === 'outsourcing' && (
       <>
-      <Card>
+        <Card>
         <CardHeader>
           <CardTitle>Outsourcing Decision Engine</CardTitle>
           <CardDescription>Configure automated outsourcing decisions based on capacity, methods, deadlines, and customer requirements.</CardDescription>
-        </CardHeader>
+          </CardHeader>
         <CardContent className="space-y-6">
-          <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between">
             <div className="font-medium">Enable Outsourcing Engine</div>
             <Switch checked={!!outsourcing.enabled} onCheckedChange={(v)=>{ const next={...outsourcing, enabled:v}; setOutsourcing(next); updateOrganizationSettings({ automations: { ...(organization?.org_settings?.automations || {}), statusChanges: rules, schedulingRules: schedRules, mixedWorkflows: mixed, outsourcing: next } }); }} />
           </div>
@@ -815,14 +858,14 @@ export function Automations() {
           {outsourcingTab==='decorator' && (
             <div className="rounded border p-3 space-y-3">
               <div className="text-sm font-medium">Decorator Selection</div>
-              <div>
+                <div>
                 <Label>Minimum Quality Rating</Label>
                 <div className="flex items-center gap-3">
                   <input type="range" min={1} max={5} step={1} value={outsourcing.minQuality || 4} onChange={(e)=>{ const next={...outsourcing, minQuality: parseInt(e.target.value,10)}; setOutsourcing(next); }} className="w-full" />
                   <Badge variant="secondary">{outsourcing.minQuality || 4}+</Badge>
                 </div>
                 <div className="text-xs text-muted-foreground">Only use decorators with {outsourcing.minQuality || 4}+ star rating</div>
-              </div>
+                </div>
               <div>
                 <Label>Maximum Lead Time (Days)</Label>
                 <Input value={outsourcing.maxLeadDays || 7} onChange={(e)=>{ const next={...outsourcing, maxLeadDays: parseInt(e.target.value||'0',10)}; setOutsourcing(next); }} />
@@ -831,7 +874,7 @@ export function Automations() {
                 <div className="font-medium">Auto-Assign Best Decorator</div>
                 <Switch checked={!!outsourcing.autoAssignBest} onCheckedChange={(v)=>{ const next={...outsourcing, autoAssignBest:v}; setOutsourcing(next); }} />
               </div>
-            </div>
+                </div>
           )}
 
           {outsourcingTab==='fallback' && (
@@ -973,8 +1016,8 @@ export function Automations() {
                   <Badge variant="secondary">{r.actions} actions</Badge>
                 </div>
               ))}
+              </div>
             </div>
-          </div>
 
           <div>
             <div className="font-medium mb-2">Test Workflow</div>
@@ -986,8 +1029,8 @@ export function Automations() {
             <Button onClick={()=>updateOrganizationSettings({ automations: { ...(organization?.org_settings?.automations || {}), leadWorkflows: leadWork, leads: leadAuto, emails: emailAuto, statusChanges: rules, schedulingRules: schedRules, mixedWorkflows: mixed, outsourcing, purchaseOrders: poRules } })}>Save Settings</Button>
             <Button variant="outline" onClick={()=>setLeadWork(initialLeadWorkflows)}>Reset to Defaults</Button>
           </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
       </>
       )}
       {/* Leads */}
@@ -1059,11 +1102,11 @@ export function Automations() {
       {/* Emails */}
       {activeCategory === 'emails' && (
       <>
-      <Card>
+        <Card>
         <CardHeader>
           <CardTitle>AI Email Auto-Response</CardTitle>
           <CardDescription>Configure how InkIQ should handle incoming emails automatically</CardDescription>
-        </CardHeader>
+          </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex items-center justify-between">
             <div className="font-medium">Enable Auto-Response</div>
@@ -1151,21 +1194,21 @@ export function Automations() {
       {/* Purchase Orders */}
       {activeCategory === 'po' && (
       <>
-      <div className="flex items-center justify-between">
-        <div>
+              <div className="flex items-center justify-between">
+                <div>
           <h4 className="font-medium">Configure Automatic Order Placement</h4>
           <p className="text-sm text-muted-foreground">Set up rules for automatically placing purchase orders when garments are added to PO</p>
-        </div>
+                </div>
         <Button variant="outline">Cancel</Button>
-      </div>
+              </div>
 
       <Card className="mt-3">
         <CardHeader>
           <CardTitle className="text-base">Basic Configuration</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
+              <div className="flex items-center justify-between">
+                <div>
               <div className="font-medium">Enable Automatic Order Placement</div>
               <div className="text-xs text-muted-foreground">Automatically place orders when garments are added to purchase orders</div>
             </div>
@@ -1189,7 +1232,7 @@ export function Automations() {
                 <SelectItem value="partner_only">Partner Only</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+                </div>
           <div>
             <Label>Default Shipping Urgency</Label>
             <Select value={poConfig.defaultUrgency} onValueChange={(v)=>setPoConfig((c:any)=>({ ...c, defaultUrgency: v }))}>
@@ -1200,7 +1243,7 @@ export function Automations() {
                 <SelectItem value="rush">Rush (overnight)</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+              </div>
           <div className="flex items-center justify-between">
             <div className="font-medium">Send Notification on Order Placement</div>
             <Switch checked={poConfig.notifyOnPlacement} onCheckedChange={(v)=>setPoConfig((c:any)=>({ ...c, notifyOnPlacement: v }))} />
@@ -1224,11 +1267,11 @@ export function Automations() {
             <CardDescription>Automatically identify orders that require multiple decoration methods</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
+              <div className="flex items-center justify-between">
+                <div>
                 <div className="font-medium">Automatically detect multi-step workflows</div>
                 <div className="text-sm text-muted-foreground">Automatically detect orders that require multiple decoration methods</div>
-              </div>
+                </div>
               <Switch checked={!!mixed.autoDetect} onCheckedChange={(v)=>{ const next={...mixed, autoDetect:v}; setMixed(next); updateOrganizationSettings({ automations: { ...(organization?.org_settings?.automations || {}), statusChanges: rules, schedulingRules: schedRules, mixedWorkflows: next } }); }} />
             </div>
           </CardContent>
@@ -1271,10 +1314,10 @@ export function Automations() {
                 <Label>Default Supplier</Label>
                 <Input value={mixed.defaultSupplier || ''} onChange={(e)=>{ const next={...mixed, defaultSupplier:e.target.value}; setMixed(next); updateOrganizationSettings({ automations: { ...(organization?.org_settings?.automations || {}), statusChanges: rules, schedulingRules: schedRules, mixedWorkflows: next } }); }} placeholder="Primary Supplier" />
                 </div>
-              <div>
+                <div>
                 <Label>Default Warehouse</Label>
                 <Input value={mixed.defaultWarehouse || ''} onChange={(e)=>{ const next={...mixed, defaultWarehouse:e.target.value}; setMixed(next); updateOrganizationSettings({ automations: { ...(organization?.org_settings?.automations || {}), statusChanges: rules, schedulingRules: schedRules, mixedWorkflows: next } }); }} placeholder="Main Warehouse" />
-              </div>
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <div>
@@ -1282,14 +1325,14 @@ export function Automations() {
                 <div className="text-sm text-muted-foreground">Use faster shipping to minimize delays between decoration steps</div>
               </div>
               <Switch checked={!!mixed.preferExpressBetweenSteps} onCheckedChange={(v)=>{ const next={...mixed, preferExpressBetweenSteps:v}; setMixed(next); updateOrganizationSettings({ automations: { ...(organization?.org_settings?.automations || {}), statusChanges: rules, schedulingRules: schedRules, mixedWorkflows: next } }); }} />
-            </div>
+                </div>
           </CardContent>
         </Card>
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={()=>{ const def = { autoDetect:true, sequence:['screen_printing','dtf','dtg','embroidery'], defaultSupplier:'Primary Supplier', defaultWarehouse:'Main Warehouse', preferExpressBetweenSteps:false }; setMixed(def); updateOrganizationSettings({ automations: { ...(organization?.org_settings?.automations || {}), statusChanges: rules, schedulingRules: schedRules, mixedWorkflows: def } }); }}>Reset to Defaults</Button>
           <Button onClick={()=>updateOrganizationSettings({ automations: { ...(organization?.org_settings?.automations || {}), statusChanges: rules, schedulingRules: schedRules, mixedWorkflows: mixed } })}>Save Workflow Settings</Button>
-        </div>
+              </div>
 
         {/* Example Workflow */}
         <Card>

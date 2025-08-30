@@ -43,6 +43,7 @@ export interface GarmentStatusHistory {
 }
 
 export interface GarmentDetails {
+  id?: string;
   status: GarmentStatus;
   poReference?: string;
   stockIssues: GarmentIssue[];

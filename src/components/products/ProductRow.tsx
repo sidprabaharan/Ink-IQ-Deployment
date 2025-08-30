@@ -9,11 +9,13 @@ import { toast } from "sonner";
 import { useCartManager } from '@/context/CartManagerContext';
 import { CartItem } from '@/types/cart';
 import { ProductCustomizationDialog } from './ProductCustomizationDialog';
+import { getSupplierById } from '@/lib/promostandards/registry';
 
 type Supplier = {
   name: string;
   price: number;
   inventory: number;
+  inventoryByWarehouseSize?: Record<string, Record<string, number>>;
 };
 
 type Product = {
@@ -31,9 +33,10 @@ interface ProductRowProps {
   product: Product;
   showVendors: boolean;
   showPrices: boolean;
+  resultsAsOf?: string | null;
 }
 
-export function ProductRow({ product, showVendors, showPrices }: ProductRowProps) {
+export function ProductRow({ product, showVendors, showPrices, resultsAsOf }: ProductRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [expandedColor, setExpandedColor] = useState<string | null>(null);
   const [showAllColors, setShowAllColors] = useState(false);
@@ -41,9 +44,17 @@ export function ProductRow({ product, showVendors, showPrices }: ProductRowProps
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [showCustomizationDialog, setShowCustomizationDialog] = useState(false);
   const { addToCart, activeCart, createCart } = useCartManager();
+  const [loadingInv, setLoadingInv] = useState(false);
+  const [inventoryAsOf, setInventoryAsOf] = useState<string | null>(null);
   
-  const sizes = ['S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'];
-  const locations = ['DALLAS, TX', 'MEMPHIS, TN', 'GILDAN DISTRIBUTION CENTER'];
+  const sizes = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'];
+  const dynamicLocations = React.useMemo(() => {
+    const whs = selectedSupplier?.inventoryByWarehouseSize
+      ? Object.keys(selectedSupplier.inventoryByWarehouseSize)
+      : [];
+    if (whs.length > 0) return whs;
+    return ['DALLAS, TX', 'MEMPHIS, TN', 'GILDAN DISTRIBUTION CENTER'];
+  }, [selectedSupplier]);
   
   // Select first color as default expanded color
   useEffect(() => {
@@ -55,6 +66,23 @@ export function ProductRow({ product, showVendors, showPrices }: ProductRowProps
   const handleSupplierClick = (supplier: Supplier) => {
     setSelectedSupplier(supplier);
     setExpanded(true);
+    if (!supplier.inventoryByWarehouseSize && product?.sku) {
+      const ss = getSupplierById('ss') as any;
+      if (ss && ss.getInventoryBySku) {
+        setLoadingInv(true);
+        ss.getInventoryBySku(product.sku)
+          .then((inv: any) => {
+            if (!inv) return;
+            const byWh: Record<string, Record<string, number>> = {};
+            (inv.byWarehouse || []).forEach((w: any) => {
+              byWh[w.warehouseName || w.warehouseId] = w.bySize || {};
+            });
+            setSelectedSupplier(prev => prev ? { ...prev, inventoryByWarehouseSize: byWh } : prev);
+            if (inv.asOf) setInventoryAsOf(inv.asOf);
+          })
+          .finally(() => setLoadingInv(false));
+      }
+    }
   };
 
   const toggleShowAllColors = () => {
@@ -200,11 +228,18 @@ export function ProductRow({ product, showVendors, showPrices }: ProductRowProps
                 </div>
               )}
               
-              {showPrices && (
-                <div className="text-green-600 font-semibold text-sm">
-                  ${product.lowestPrice.toFixed(2)}
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                {showPrices && (
+                  <div className="text-green-600 font-semibold text-sm">
+                    ${product.lowestPrice.toFixed(2)}
+                  </div>
+                )}
+                {resultsAsOf && (
+                  <span className="text-[10px] px-1 py-[1px] rounded bg-gray-100 text-gray-700">
+                    {isLive(resultsAsOf) ? 'Live from S&S' : 'Cached'}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           
@@ -244,7 +279,12 @@ export function ProductRow({ product, showVendors, showPrices }: ProductRowProps
             {/* Supplier Header - Updated to show selected supplier */}
             <div className="px-4 py-3 flex items-center gap-6 border-b bg-white">
               <div className="text-sm font-medium flex-1">
-                {selectedSupplier.name}'s Inventory & Pricing
+                {selectedSupplier.name}'s Inventory & Pricing <span className="ml-2 text-[10px] px-1 py-[1px] rounded bg-gray-100 text-gray-700">S&S</span>
+                {inventoryAsOf && (
+                  <span className="ml-3 text-[10px] text-gray-500">
+                    Updated {formatMinutesAgo(inventoryAsOf)} ago
+                  </span>
+                )}
               </div>
               
               <div className="ml-auto flex gap-2">
@@ -288,7 +328,10 @@ export function ProductRow({ product, showVendors, showPrices }: ProductRowProps
               </div>
               
               {/* Location inventory grid - improved display without input field styling */}
-              {locations.map((location, locationIndex) => (
+              {loadingInv && (
+                <div className="text-xs text-gray-500">Loading inventory…</div>
+              )}
+              {dynamicLocations.map((location, locationIndex) => (
                 <div key={location} className="mt-4">
                   <div className="grid grid-cols-8 gap-2 text-center items-center mb-2">
                     <div className="text-xs text-left font-medium">
@@ -296,16 +339,17 @@ export function ProductRow({ product, showVendors, showPrices }: ProductRowProps
                       {locationIndex < 2 && <div className="text-[10px] text-gray-500">Cutoff 4:00 CT</div>}
                     </div>
                     
-                    {sizes.map((size, sizeIndex) => {
-                      // Adjust inventory to reflect selected supplier
-                      // Using supplier inventory as baseline and adjusting by location and size
-                      const baseInventory = selectedSupplier.inventory;
-                      
-                      const inventory = 
-                        locationIndex === 0 ? Math.floor(baseInventory * 0.2 * (1 - (sizeIndex * 0.1))) :
-                        locationIndex === 1 ? Math.floor(baseInventory * 0.15 * (1 - (sizeIndex * 0.05))) :
-                        locationIndex === 2 && (sizeIndex === 1 || sizeIndex === 2 || sizeIndex === 6) ? 
-                          Math.floor(baseInventory * 0.65 * (1 + (sizeIndex * 0.1))) : 0;
+                    {sizes.map((size) => {
+                      const byWh = selectedSupplier?.inventoryByWarehouseSize;
+                      const realInv = byWh?.[location]?.[size];
+                      let inventory: number;
+                      if (typeof realInv === 'number') {
+                        inventory = realInv;
+                      } else {
+                        const base = selectedSupplier.inventory;
+                        const fraction = 1 / Math.max(dynamicLocations.length, 1);
+                        inventory = Math.floor(base * fraction * 0.8);
+                      }
                       
                       return (
                         <div key={`${location}-${size}`} className="relative flex flex-col items-center">
@@ -386,4 +430,28 @@ export function ProductRow({ product, showVendors, showPrices }: ProductRowProps
       )}
     </Card>
   );
+}
+
+function formatMinutesAgo(iso: string): string {
+  try {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const minutes = Math.max(0, Math.floor((now - then) / 60000));
+    if (minutes < 1) return 'just now';
+    if (minutes === 1) return '1 minute';
+    return `${minutes} minutes`;
+  } catch {
+    return 'just now';
+  }
+}
+
+function isLive(iso: string): boolean {
+  try {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const minutes = Math.max(0, Math.floor((now - then) / 60000));
+    return minutes < 10;
+  } catch {
+    return false;
+  }
 }

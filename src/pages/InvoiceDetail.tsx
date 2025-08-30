@@ -14,12 +14,15 @@ import { InvoiceSummaryCard } from '@/components/quotes/InvoiceSummaryCard';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { useToast } from '@/hooks/use-toast';
+import { runStatusChangeAutomations } from '@/lib/automation';
 
 export default function InvoiceDetail() {
   const { organization } = useOrganization();
   const { id } = useParams();
   const { getInvoice, updateInvoiceStatus, recordPayment } = useInvoices();
   const { customers, fetchCustomers } = useCustomers();
+  const { toast } = useToast();
   const [data, setData] = useState<any | null>(null);
   const [items, setItems] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
@@ -214,8 +217,28 @@ export default function InvoiceDetail() {
   });
 
   const handleStatusChange = async (newStatus: string) => {
+    const prev = status;
     setStatus(newStatus);
-    if (id) await updateInvoiceStatus(id, newStatus);
+    if (!id) return;
+    const res = await updateInvoiceStatus(id, newStatus);
+    if (res.success) {
+      toast({ title: 'Status Updated', description: `Invoice status changed to ${newStatus}` });
+      // Fire client-side automations immediately for UX (backend will also process queued event)
+      try {
+        runStatusChangeAutomations(organization?.org_settings, {
+          entityType: 'invoice',
+          entityId: id,
+          toStatus: newStatus,
+          fromStatus: prev,
+          payload: { invoice: { id } }
+        }, {
+          notify: (t, d) => toast({ title: t, description: d }),
+        });
+      } catch {}
+    } else {
+      setStatus(prev);
+      toast({ title: 'Failed to update status', description: res.error || 'Please try again.', variant: 'destructive' });
+    }
   };
 
   // Prepare top tiles similar to quote detail

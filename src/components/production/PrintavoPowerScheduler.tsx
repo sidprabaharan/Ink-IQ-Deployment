@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { track } from "@/lib/utils";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useAuth } from "@/context/AuthContext";
+import { runStatusChangeAutomations } from "@/lib/automation";
 
 export type DecorationMethod = "screen_printing" | "embroidery" | "dtf" | "dtg" | string;
 
@@ -995,6 +996,9 @@ export default function PrintavoPowerScheduler() {
       await supabase.rpc('update_job_status', { p_job_id: jobId, p_status: 'in_progress' });
       track('job_status_changed', { job_id: jobId, from_status: 'scheduled', to_status: 'in_progress' });
       await logAudit(jobId, 'start', { stage: selectedStage });
+      try {
+        runStatusChangeAutomations(organization?.org_settings, { entityType: 'job', entityId: jobId, toStatus: 'in_progress', fromStatus: 'scheduled', payload: { stage: selectedStage } }, { notify: (t, d) => toast({ title: t, description: d }) });
+      } catch {}
     } catch {}
     finally { pendingOpsRef.current.delete(jobId); }
   };
@@ -1009,6 +1013,9 @@ export default function PrintavoPowerScheduler() {
       track('job_done', { job_id: jobId });
       track('job_status_changed', { job_id: jobId, from_status: 'in_progress', to_status: 'done' });
       await logAudit(jobId, 'mark_done', { stage: selectedStage });
+      try {
+        runStatusChangeAutomations(organization?.org_settings, { entityType: 'job', entityId: jobId, toStatus: 'done', fromStatus: 'in_progress', payload: { stage: selectedStage } }, { notify: (t, d) => toast({ title: t, description: d }) });
+      } catch {}
     } catch {}
     finally { pendingOpsRef.current.delete(jobId); }
   };
@@ -1022,6 +1029,9 @@ export default function PrintavoPowerScheduler() {
       await supabase.rpc('update_job_status', { p_job_id: jobId, p_status: block ? 'blocked' : 'scheduled' });
       track('job_status_changed', { job_id: jobId, from_status: block ? 'scheduled' : 'blocked', to_status: block ? 'blocked' : 'scheduled' });
       await logAudit(jobId, block ? 'block' : 'unblock', { stage: selectedStage });
+      try {
+        runStatusChangeAutomations(organization?.org_settings, { entityType: 'job', entityId: jobId, toStatus: block ? 'blocked' : 'scheduled', fromStatus: block ? 'scheduled' : 'blocked', payload: { stage: selectedStage } }, { notify: (t, d) => toast({ title: t, description: d }) });
+      } catch {}
     } catch {}
     finally { pendingOpsRef.current.delete(jobId); }
   };
@@ -1035,6 +1045,9 @@ export default function PrintavoPowerScheduler() {
       await supabase.rpc('update_job_status', { p_job_id: jobId, p_status: 'scheduled' });
       track('job_status_changed', { job_id: jobId, from_status: 'canceled_or_blocked', to_status: 'scheduled' });
       await logAudit(jobId, 'reopen', { stage: selectedStage });
+      try {
+        runStatusChangeAutomations(organization?.org_settings, { entityType: 'job', entityId: jobId, toStatus: 'scheduled', fromStatus: 'canceled_or_blocked', payload: { stage: selectedStage } }, { notify: (t, d) => toast({ title: t, description: d }) });
+      } catch {}
     } catch {}
     finally { pendingOpsRef.current.delete(jobId); }
   };

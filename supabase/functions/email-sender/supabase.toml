@@ -1,0 +1,12 @@
+verify_jwt = false
+
+[routing]
+method = "POST"
+path = "/email-sender"
+
+[scheduled]
+crons = [
+  { name = "email-sender-cron", schedule = "*/5 * * * *" }
+]
+
+

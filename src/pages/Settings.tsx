@@ -28,6 +28,7 @@ import { OutsourcingPreferences } from '@/components/settings/OutsourcingPrefere
 import { ProductionSettings } from '@/components/settings/ProductionSettings';
 import { ImprintMethodsSettings } from '@/components/settings/ImprintMethodsSettings';
 import { useOrganization } from '@/context/OrganizationContext';
+import { SystemNotifications } from '@/components/settings/SystemNotifications';
  
 
 
@@ -55,6 +56,7 @@ export default function Settings() {
     // { id: 'zapier', name: 'Zapier Integration', icon: Zap, component: ZapierIntegration }, // hidden
     { id: 'billing', name: 'Billing & Subscription', icon: BillingIcon, component: Billing },
     { id: 'general', name: 'General Settings', icon: SettingsIcon, component: GeneralSettings },
+    { id: 'notifications', name: 'Notifications', icon: Zap, component: SystemNotifications },
   ];
 
   

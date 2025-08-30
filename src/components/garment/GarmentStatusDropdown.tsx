@@ -10,7 +10,12 @@ import {
 import { Button } from '@/components/ui/button';
 import { ChevronDown } from 'lucide-react';
 import { GarmentStatus, GARMENT_STATUS_CONFIG, GarmentDetails } from '@/types/garment';
+import { useOrganization } from '@/context/OrganizationContext';
+import { useToast } from '@/hooks/use-toast';
+import { runStatusChangeAutomations } from '@/lib/automation';
 import { GarmentStatusBadge } from './GarmentStatusBadge';
+import { deliverWithRetry } from '@/lib/webhook';
+import { triggerViaRelay } from '@/lib/webhookRelay';
 
 interface GarmentStatusDropdownProps {
   garmentDetails: GarmentDetails;
@@ -25,10 +30,40 @@ export function GarmentStatusDropdown({
 }: GarmentStatusDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const hasIssues = garmentDetails.stockIssues.length > 0;
+  const { organization } = useOrganization();
+  const { toast } = useToast();
 
   const handleStatusChange = (newStatus: GarmentStatus) => {
+    try {
+      if (!garmentDetails.id) {
+        console.warn('[ui] GarmentStatusDropdown missing garment id');
+      }
+      console.groupCollapsed('[ui] GarmentStatusDropdown change', { id: garmentDetails.id, from: garmentDetails.status, to: newStatus });
+    } catch {}
     onStatusChange(newStatus);
     setIsOpen(false);
+
+    // Fire status-change automations for garments
+    try {
+      const label = GARMENT_STATUS_CONFIG[newStatus]?.label || String(newStatus);
+      runStatusChangeAutomations(organization?.org_settings, {
+        entityType: 'garment',
+        toStatus: label,
+        payload: { garmentId: garmentDetails.id || '(unknown)' }
+      }, {
+        notify: (title, description) => toast({ title, description }),
+        triggerWebhook: async (url, payload, opts) => {
+          try {
+            // Prefer server-side relay to avoid CORS
+            await triggerViaRelay({ url, payload, secret: opts?.secret })
+          } catch (e) {
+            console.warn('[relay] failed, falling back to direct webhook', e)
+            try { await deliverWithRetry(url, payload, { secret: opts?.secret }); } catch (e2) { console.warn('[webhook] failed', e2); }
+          }
+        }
+      });
+    } catch {}
+    try { console.groupEnd?.(); } catch {}
   };
 
   return (

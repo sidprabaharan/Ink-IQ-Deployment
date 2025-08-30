@@ -10,6 +10,10 @@ import { ChevronDown, FileText, Palette, CheckCircle, Cog, Package, DollarSign, 
 import { useToast } from "@/hooks/use-toast";
 import { useOrganization } from "@/context/OrganizationContext";
 import { runStatusChangeAutomations } from "@/lib/automation";
+import { renderTemplate, sendGmail } from "@/lib/email";
+import { deliverWithRetry } from "@/lib/webhook";
+import { triggerViaRelay } from "@/lib/webhookRelay";
+import { supabase } from "@/lib/supabase";
 
 interface QuoteStatusDropdownProps {
   currentStatus: string;
@@ -44,6 +48,7 @@ export function QuoteStatusDropdown({ currentStatus, onStatusChange, useDbStatus
   const { organization } = useOrganization();
 
   const handleStatusSelect = (status: string) => {
+    try { console.groupCollapsed('[ui] QuoteStatusDropdown change', { from: currentStatus, to: status }); } catch {}
     onStatusChange(status);
     toast({
       title: "Status Updated",
@@ -54,12 +59,45 @@ export function QuoteStatusDropdown({ currentStatus, onStatusChange, useDbStatus
     runStatusChangeAutomations(organization?.org_settings, {
       entityType: 'quote',
       toStatus: status,
+      payload: {
+        quote: { id: (organization as any)?.lastQuoteId, total: undefined, link: undefined },
+        customer: undefined
+      }
     }, {
       notify: (title, description) => toast({ title, description }),
+      sendEmail: async ({ to, template, subject, body, variables }) => {
+        try {
+          const templates = (organization as any)?.org_settings?.emails?.templates as Array<any> | undefined;
+          const found = Array.isArray(templates) ? templates.find(t => t.name === template) : undefined;
+          const rendered = found ? renderTemplate(found, variables || {}) : { subject: subject || (template || ''), body: body || '' };
+          await sendGmail({ to: to || 'customer', subject: rendered.subject, body: rendered.body });
+        } catch (e) { console.warn('[email] send failed', e); }
+      },
+      triggerWebhook: async (url, payload, opts) => {
+        try {
+          await triggerViaRelay({ url, payload, secret: opts?.secret })
+        } catch (e) {
+          console.warn('[relay] failed, falling back to direct webhook', e)
+          try { await deliverWithRetry(url, payload, { secret: opts?.secret }); } catch (e2) { console.warn('[webhook] failed', e2); }
+        }
+      },
+      createTask: async ({ title, dueAt, assigneeId, status }) => {
+        try {
+          const { error } = await supabase.from('tasks').insert({ title, due_date: dueAt || null, assignee_id: assigneeId || null, status: status || 'open' });
+          if (error) throw error;
+        } catch (e) { console.warn('[tasks] create failed (ignored)', e); }
+      }
     });
+    try { console.groupEnd?.(); } catch {}
   };
 
-  const options = useDbStatuses ? dbStatusOptions : quoteStatusOptions;
+  // Prefer org-configured statuses when not using DB statuses
+  const orgStatuses = Array.isArray((organization as any)?.org_settings?.orderStatuses)
+    ? ((organization as any).org_settings.orderStatuses as Array<{ name: string; color?: string; active?: boolean }>)
+        .filter(s => s && (s.active !== false))
+        .map(s => ({ name: s.name, icon: FileText, color: 'text-gray-600' }))
+    : [] as Array<{ name: string; icon: any; color: string }>;
+  const options = useDbStatuses ? dbStatusOptions : (orgStatuses.length ? orgStatuses : quoteStatusOptions);
 
   const currentStatusConfig = options.find(option => 
     option.name.toLowerCase() === currentStatus.toLowerCase()

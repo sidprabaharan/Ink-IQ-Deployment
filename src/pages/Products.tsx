@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
@@ -8,6 +8,7 @@ import { Search, RefreshCw } from 'lucide-react';
 import { ProductRow } from '@/components/products/ProductRow';
 import { ProductFilters } from '@/components/products/ProductFilters';
 import { mockProducts } from '@/data/mockProducts';
+import { searchCatalog } from '@/lib/promostandards/search';
 import { CartManagerProvider } from '@/context/CartManagerContext';
 import { CartIcon } from '@/components/cart/CartIcon';
 import { Separator } from '@/components/ui/separator';
@@ -19,15 +20,52 @@ export default function Products() {
   const [showVendors, setShowVendors] = useState(true);
   const [showPrices, setShowPrices] = useState(true);
   const [sortBy, setSortBy] = useState('relevancy');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [supplierResults, setSupplierResults] = useState<any[] | null>(null);
+  const [resultsAsOf, setResultsAsOf] = useState<string | null>(null);
   
   const itemsPerPage = 5;
   
-  // Filter products based on search term and category
-  const filteredProducts = mockProducts.filter(product => {
-    const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  // Fetch supplier catalog when the user searches (basic debounce)
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      const term = (searchTerm || '').trim();
+      if (term.length < 2) {
+        setSupplierResults(null);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const unified = await searchCatalog(term, { limit: 8 });
+        setSupplierResults(unified);
+        setResultsAsOf(new Date().toISOString());
+      } catch (e: any) {
+        setError(e?.message || 'Failed to search suppliers');
+        setSupplierResults(null);
+        setResultsAsOf(null);
+      } finally {
+        setLoading(false);
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  const sourceProducts = useMemo(() => {
+    if (supplierResults && supplierResults.length > 0) {
+      return supplierResults;
+    }
+    return mockProducts;
+  }, [supplierResults]);
+
+  // Filter products based on search term and category (applies to either source)
+  const filteredProducts = sourceProducts.filter((product: any) => {
+    const matchesSearch = searchTerm === '' || product.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                         product.sku.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = categoryFilter === 'All' || product.category === categoryFilter;
-    
     return matchesSearch && matchesCategory;
   });
   
@@ -73,7 +111,8 @@ export default function Products() {
           <div className="flex-1 p-4 overflow-auto">
             <div className="flex items-center justify-between mb-4">
               <div className="text-sm text-gray-500">
-                Showing results 1-{Math.min(displayedProducts.length, itemsPerPage)} of {filteredProducts.length} items
+                {loading ? 'Searching suppliers…' : `Showing results 1-${Math.min(displayedProducts.length, itemsPerPage)} of ${filteredProducts.length} items`}
+                {error && <span className="text-red-600 ml-2">{error}</span>}
               </div>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
@@ -105,6 +144,7 @@ export default function Products() {
                   product={product} 
                   showVendors={showVendors}
                   showPrices={showPrices}
+                  resultsAsOf={resultsAsOf}
                 />
               ))}
               
