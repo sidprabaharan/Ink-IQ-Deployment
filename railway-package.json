@@ -1,0 +1,18 @@
+{
+  "name": "ss-api-proxy-railway",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "S&S Activewear API Proxy for Railway",
+  "main": "railway-simple.js",
+  "scripts": {
+    "start": "node railway-simple.js",
+    "dev": "node railway-simple.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
