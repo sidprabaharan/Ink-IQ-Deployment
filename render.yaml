@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: ss-api-proxy
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node railway-deploy.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000

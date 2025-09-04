@@ -35,6 +35,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { useNavigate } from 'react-router-dom';
+import { INDUSTRIES, getIndustryNameFromId } from "@/data/industries";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -222,10 +223,7 @@ export default function Customers() {
     return companyName.charAt(0).toUpperCase();
   };
 
-  const getIndustryName = (industryId: string) => {
-    const industry = industries.find(i => i.id === industryId);
-    return industry ? industry.name : industryId;
-  };
+  const getIndustryName = (industryId: string) => getIndustryNameFromId(industryId);
 
   const handleAddContact = (data: ContactFormValues) => {
     if (selectedCustomerId) {
@@ -1815,11 +1813,4 @@ export default function Customers() {
   );
 }
 
-const industries = [
-  { id: "tech", name: "Technology" },
-  { id: "retail", name: "Retail" },
-  { id: "healthcare", name: "Healthcare" },
-  { id: "education", name: "Education" },
-  { id: "manufacturing", name: "Manufacturing" },
-  { id: "ecommerce", name: "Ecommerce" },
-];
+// Centralized industries available via INDUSTRIES import

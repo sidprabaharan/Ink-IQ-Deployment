@@ -1,0 +1,16 @@
+{
+  "name": "inkiq-ss-lambda",
+  "version": "1.0.0",
+  "description": "AWS Lambda function for S&S Activewear PromoStandards API integration",
+  "main": "index.js",
+  "scripts": {
+    "zip": "zip -r ../ss-lambda-deployment.zip .",
+    "zip-windows": "powershell Compress-Archive -Path .\\* -DestinationPath ..\\ss-lambda-deployment.zip -Force"
+  },
+  "keywords": ["aws", "lambda", "s&s", "promostandards", "soap"],
+  "author": "InkIQ Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.x"
+  }
+}

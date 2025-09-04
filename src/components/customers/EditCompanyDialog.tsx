@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Customer } from "@/context/CustomersContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { INDUSTRIES } from "@/data/industries";
 
 // Define the schema for the company form
 const companySchema = z.object({
@@ -78,15 +79,8 @@ interface EditCompanyDialogProps {
   customer: Customer;
 }
 
-// Mock data for industries
-const industries = [
-  { id: "tech", name: "Technology" },
-  { id: "retail", name: "Retail" },
-  { id: "healthcare", name: "Healthcare" },
-  { id: "education", name: "Education" },
-  { id: "manufacturing", name: "Manufacturing" },
-  { id: "ecommerce", name: "Ecommerce" },
-];
+// Centralized industries
+const industries = INDUSTRIES;
 
 // Company size options
 const companySizes = [

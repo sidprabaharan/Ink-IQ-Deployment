@@ -58,6 +58,21 @@ app.get('/ss/search', async (req, res) => {
   }
 })
 
+// Browse all products endpoint - gets first 10 products without search filter
+app.get('/ss/browse', async (req, res) => {
+  try {
+    const { page = '1', pageSize = '10' } = req.query
+    const u = new URL('Products', BASE)
+    u.searchParams.set('page', String(page))
+    u.searchParams.set('pageSize', String(pageSize))
+    u.searchParams.set('mediaType', 'json')
+    const json = await tryFetch(u.toString())
+    res.json(json)
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) })
+  }
+})
+
 app.get('/ss/inventory', async (req, res) => {
   try {
     const { styleId = '', skus = '' } = req.query

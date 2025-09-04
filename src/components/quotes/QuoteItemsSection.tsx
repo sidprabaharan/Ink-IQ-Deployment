@@ -98,16 +98,40 @@ export interface QuoteItemsSectionRef {
 }
 
 const PRODUCT_CATEGORIES = [
-  "T-Shirts",
-  "Polo Shirts", 
-  "Hoodies",
-  "Sweatshirts",
-  "Tank Tops",
-  "Long Sleeve Shirts",
-  "Jackets",
-  "Hats",
+  "Aprons",
+  "Backpacks",
   "Bags",
-  "Other"
+  "Beanies",
+  "Blankets",
+  "Button-Down Shirts",
+  "Drinkware",
+  "Embroidery Patches",
+  "Face Masks",
+  "Fleece Jackets",
+  "Gloves",
+  "Hats",
+  "Hoodies",
+  "Jackets",
+  "Jerseys",
+  "Keychains",
+  "Labels & Tags",
+  "Lanyards",
+  "Long Sleeve Shirts",
+  "Outerwear",
+  "Patches",
+  "Pens",
+  "Polo Shirts",
+  "Shorts",
+  "Stickers & Decals",
+  "Sweatpants",
+  "Sweatshirts",
+  "T-Shirts",
+  "Tank Tops",
+  "Tote Bags",
+  "Umbrellas",
+  "Uniforms",
+  "Workwear",
+  "Other",
 ];
 
 export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSectionProps>(
@@ -150,6 +174,7 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
     const [selectedGroupId, setSelectedGroupId] = useState<string>('');
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
     const [proofMockupFile, setProofMockupFile] = useState<File | null>(null);
+    const [quickMockupFiles, setQuickMockupFiles] = useState<File[]>([]);
     const [libraryOpen, setLibraryOpen] = useState(false);
     const [imprintData, setImprintData] = useState<Partial<ItemImprint>>({
       method: '',
@@ -336,6 +361,43 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
       if (file) {
         setProofMockupFile(file);
       }
+    };
+
+    // Quick mockup attach flow (separate from imprint dialog)
+    const attachMockups = (groupId: string, itemId: string) => {
+      setSelectedGroupId(groupId);
+      setSelectedItemId(itemId);
+      setQuickMockupFiles([]);
+      setTimeout(() => {
+        document.getElementById('quick-mockup-upload')?.click();
+      }, 0);
+    };
+
+    const handleQuickMockupUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || []);
+      if (files.length === 0 || !selectedGroupId || !selectedItemId) return;
+      const newImprint: ItemImprint = {
+        id: `imprint-${Date.now()}`,
+        method: '',
+        location: '',
+        width: 0,
+        height: 0,
+        colorsOrThreads: '',
+        notes: '',
+        itemId: selectedItemId,
+        customerArt: [],
+        productionFiles: [],
+        proofMockup: files as any,
+      } as any;
+      setItemGroups(prev => prev.map(group => {
+        if (group.id !== selectedGroupId) return group;
+        return { ...group, imprints: [...group.imprints, newImprint] };
+      }));
+      // Reset state and input
+      (event.target as HTMLInputElement).value = '';
+      setQuickMockupFiles([]);
+      setSelectedItemId('');
+      setSelectedGroupId('');
     };
 
     // Handle imprint dialog close
@@ -557,24 +619,11 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
       const groupNumber = itemGroups.length + 1;
       const newGroup: ItemGroup = {
         id: `group-${Date.now()}`,
-        items: [
-          {
-            id: `item-${Date.now()}`,
-            category: 'T-Shirts',
-            itemNumber: `ITEM-${String(groupNumber).padStart(3, '0')}`,
-            color: 'Black',
-            description: 'Custom Item',
-            sizes: { xs: 0, s: 0, m: 1, l: 0, xl: 0, xxl: 0, xxxl: 0 },
-            quantity: 1,
-            unitPrice: 20.00,
-            taxed: true,
-            total: 20.00,
-            mockups: []
-          }
-        ],
+        items: [],
         imprints: []
       };
       setItemGroups([...itemGroups, newGroup]);
+      setActiveGroupId(newGroup.id);
     };
 
     // Add new line item to existing group
@@ -706,8 +755,9 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     <TableCell className="p-0">
                       <Input 
                         type="number" 
-                        value={item.sizes.xs}
+                        value={item.sizes.xs === 0 ? '' : String(item.sizes.xs)}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'xs', parseInt(e.target.value) || 0)}
+                        placeholder="0"
                         className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
@@ -715,8 +765,9 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     <TableCell className="p-0">
                       <Input 
                         type="number" 
-                        value={item.sizes.s}
+                        value={item.sizes.s === 0 ? '' : String(item.sizes.s)}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 's', parseInt(e.target.value) || 0)}
+                        placeholder="0"
                         className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
@@ -724,8 +775,9 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     <TableCell className="p-0">
                       <Input 
                         type="number" 
-                        value={item.sizes.m}
+                        value={item.sizes.m === 0 ? '' : String(item.sizes.m)}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'm', parseInt(e.target.value) || 0)}
+                        placeholder="0"
                         className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
@@ -733,8 +785,9 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     <TableCell className="p-0">
                       <Input 
                         type="number" 
-                        value={item.sizes.l}
+                        value={item.sizes.l === 0 ? '' : String(item.sizes.l)}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'l', parseInt(e.target.value) || 0)}
+                        placeholder="0"
                         className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
@@ -742,8 +795,9 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     <TableCell className="p-0">
                       <Input 
                         type="number" 
-                        value={item.sizes.xl}
+                        value={item.sizes.xl === 0 ? '' : String(item.sizes.xl)}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'xl', parseInt(e.target.value) || 0)}
+                        placeholder="0"
                         className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
@@ -751,8 +805,9 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     <TableCell className="p-0">
                       <Input 
                         type="number" 
-                        value={item.sizes.xxl}
+                        value={item.sizes.xxl === 0 ? '' : String(item.sizes.xxl)}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'xxl', parseInt(e.target.value) || 0)}
+                        placeholder="0"
                         className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
@@ -760,8 +815,9 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                     <TableCell className="p-0">
                       <Input 
                         type="number" 
-                        value={item.sizes.xxxl}
+                        value={item.sizes.xxxl === 0 ? '' : String(item.sizes.xxxl)}
                         onChange={(e) => updateSizeQuantity(group.id, item.id, 'xxxl', parseInt(e.target.value) || 0)}
+                        placeholder="0"
                         className="w-10 h-8 text-center border-0 shadow-none bg-transparent px-0"
                         min="0"
                       />
@@ -805,9 +861,13 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
                           </Button>
                           </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => addImprint(group.id, item.id)}>
+                          <DropdownMenuItem onClick={() => attachMockups(group.id, item.id)}>
                             <Image className="mr-2 h-4 w-4" />
                               Attach Mockups
+                            </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => addImprint(group.id, item.id)}>
+                            <Plus className="mr-2 h-4 w-4" />
+                              Add Imprint
                             </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => duplicateItem(group.id, item.id)}>
                             <Copy className="mr-2 h-4 w-4" />
@@ -1334,6 +1394,15 @@ export const QuoteItemsSection = forwardRef<QuoteItemsSectionRef, QuoteItemsSect
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        {/* Hidden input for quick mockup attach (separate flow) */}
+        <input
+          id="quick-mockup-upload"
+          type="file"
+          accept=".jpg,.jpeg,.png,.pdf,.gif"
+          multiple
+          onChange={handleQuickMockupUpload}
+          className="hidden"
+        />
         <LibrarySelectorDialog
           open={libraryOpen}
           onOpenChange={setLibraryOpen}

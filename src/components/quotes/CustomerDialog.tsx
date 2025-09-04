@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { INDUSTRIES } from "@/data/industries";
 import { X } from "lucide-react";
 import { useCustomers } from "@/context/CustomersContext";
 import { toast } from "sonner";
@@ -67,14 +68,7 @@ export function CustomerDialog({ open, onOpenChange }: CustomerDialogProps) {
   const [taxRate, setTaxRate] = useState("");
   const [taxExemptionNumber, setTaxExemptionNumber] = useState("");
   
-  const industries = [
-    { id: "tech", name: "Technology" },
-    { id: "retail", name: "Retail" },
-    { id: "healthcare", name: "Healthcare" },
-    { id: "education", name: "Education" },
-    { id: "manufacturing", name: "Manufacturing" },
-    { id: "ecommerce", name: "Ecommerce" },
-  ];
+  const industries = INDUSTRIES;
   
   const salesReps = [
     { id: "rep1", name: "John Doe" },
@@ -89,6 +83,12 @@ export function CustomerDialog({ open, onOpenChange }: CustomerDialogProps) {
     } else {
       // Submit the form
       submitCustomerForm();
+    }
+  };
+  
+  const handlePrevStep = () => {
+    if (step > 1) {
+      setStep(step - 1);
     }
   };
   
@@ -382,6 +382,21 @@ export function CustomerDialog({ open, onOpenChange }: CustomerDialogProps) {
               <span className="text-gray-500 ml-4 font-normal">Step 3</span>
             </h3>
             <div className="space-y-4">
+              <div className="flex justify-end">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setShippingAddress1(billingAddress1);
+                    setShippingAddress2(billingAddress2);
+                    setShippingCity(billingCity);
+                    setShippingStateProvince(billingStateProvince);
+                    setShippingZipCode(billingZipCode);
+                    setShippingCountry(billingCountry);
+                  }}
+                >
+                  Same as Billing
+                </Button>
+              </div>
               <Input 
                 placeholder="Address Line 1"
                 value={shippingAddress1}
@@ -456,14 +471,6 @@ export function CustomerDialog({ open, onOpenChange }: CustomerDialogProps) {
         <DialogHeader>
           <div className="flex justify-between items-center">
             <DialogTitle>Add New Customer</DialogTitle>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onOpenChange(false)}
-              className="h-6 w-6 rounded-full"
-            >
-              <X className="h-4 w-4" />
-            </Button>
           </div>
         </DialogHeader>
         
@@ -472,18 +479,31 @@ export function CustomerDialog({ open, onOpenChange }: CustomerDialogProps) {
         {renderStepContent()}
         
         <DialogFooter className="mt-6">
-          <Button
-            variant="outline"
-            onClick={handleDiscard}
-          >
-            Discard
-          </Button>
-          <Button
-            onClick={handleNextStep}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            {step === 4 ? "Submit" : "Next Step"}
-          </Button>
+          <div className="flex w-full items-center justify-between">
+            <div>
+              <Button
+                variant="ghost"
+                onClick={handlePrevStep}
+                disabled={step === 1}
+              >
+                Back
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={handleDiscard}
+              >
+                Discard
+              </Button>
+              <Button
+                onClick={handleNextStep}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {step === 4 ? "Submit" : "Next Step"}
+              </Button>
+            </div>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

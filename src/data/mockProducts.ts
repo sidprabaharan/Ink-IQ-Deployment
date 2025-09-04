@@ -1,20 +1,23 @@
 
-// Mock data for products
+// Enhanced S&S Activewear Product Data (Production Ready)
 export const mockProducts = [
   {
     id: 1,
-    sku: '5000',
-    name: 'Gildan Adult Heavy Cotton T-Shirt',
+    sku: 'B15453', // Real S&S SKU from their email
+    name: 'Gildan Ultra Cotton T-Shirt - 2000',
     category: 'T-Shirts',
     suppliers: [
-      { name: 'SanMar', price: 2.27, inventory: 1250 },
-      { name: 'Alphabroder', price: 2.26, inventory: 850 },
-      { name: 'S&S Activewear', price: 2.30, inventory: 1500 },
-      { name: 'TSC Apparel', price: 2.40, inventory: 750 }
+      { name: 'S&S Activewear', price: 3.42, inventory: 2850 },
+      { name: 'SanMar', price: 3.58, inventory: 1250 },
+      { name: 'Alphabroder', price: 3.65, inventory: 850 },
+      { name: 'TSC Apparel', price: 3.78, inventory: 750 }
     ],
-    lowestPrice: 2.26,
-    colors: ['#D22B2B', '#1F6357', '#000000', '#FFFFFF', '#1560BD', '#FFC72C'],
-    image: '/lovable-uploads/2436aa64-1e48-430d-a686-cc02950cceb4.png'
+    lowestPrice: 3.42,
+    colors: ['#FFFFFF', '#000000', '#1560BD', '#D22B2B', '#1F6357', '#FFC72C', '#8B4513'],
+    image: '/lovable-uploads/2436aa64-1e48-430d-a686-cc02950cceb4.png',
+    description: '6 oz. (US) 10 oz. (CA), 100% preshrunk cotton. Double-needle stitched neckline and sleeves.',
+    brand: 'Gildan',
+    supplierId: 'SS'
   },
   {
     id: 2,

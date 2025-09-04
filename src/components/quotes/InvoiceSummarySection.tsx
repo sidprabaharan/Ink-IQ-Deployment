@@ -18,9 +18,13 @@ export function InvoiceSummarySection({ quoteData }: InvoiceSummarySectionProps)
   const [salesTax, setSalesTax] = useState<string>(
     quoteData?.invoiceSummary?.salesTaxRate?.toString() || ""
   );
+  const [shipping, setShipping] = useState<string>(
+    quoteData?.invoiceSummary?.shippingAmount?.toString() || ""
+  );
 
   // Use quote data values or defaults
   const subTotal = quoteData?.invoiceSummary?.subTotal || 1250.00;
+  const shippingAmount = shipping ? parseFloat(shipping) : 0;
   
   // Calculate discount amount
   const discountAmount = discountValue 
@@ -30,7 +34,7 @@ export function InvoiceSummarySection({ quoteData }: InvoiceSummarySectionProps)
     : 0;
   
   // Calculate new sub total
-  const newSubTotal = subTotal - discountAmount;
+  const newSubTotal = subTotal - discountAmount + shippingAmount;
   
   // Calculate sales tax amount
   const salesTaxAmount = salesTax 
@@ -52,8 +56,25 @@ export function InvoiceSummarySection({ quoteData }: InvoiceSummarySectionProps)
         </div>
         <div className="flex justify-between items-center">
           <span className="text-sm">Shipping</span>
-          <span className="text-sm">$0.00</span>
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500">$</span>
+            <Input
+              className="w-20 h-8 text-xs"
+              placeholder="0.00"
+              value={shipping}
+              onChange={(e) => setShipping(e.target.value)}
+              type="number"
+              min="0"
+              step="0.01"
+            />
+          </div>
         </div>
+        {shippingAmount > 0 && (
+          <div className="flex justify-between items-center text-green-700">
+            <span className="text-sm">+ Shipping</span>
+            <span className="text-sm">+${shippingAmount.toFixed(2)}</span>
+          </div>
+        )}
         <div className="flex justify-between items-center">
           <span className="text-sm">Discount</span>
           <div className="flex items-center gap-2">

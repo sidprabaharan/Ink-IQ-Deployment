@@ -1,0 +1,10 @@
+verify_jwt = false
+
+[routing]
+method = "POST"
+path = "/suppliers-ps"
+
+
+
+
+
