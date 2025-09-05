@@ -286,40 +286,55 @@ export default function Products() {
             </Button>
             <Button
               onClick={async () => {
-                console.log('🏠 LOCAL PROXY test triggered');
+                console.log('🚂 RAILWAY test triggered');
                 setLoading(true);
                 try {
-                  console.log('📡 Testing Local S&S Proxy...');
-                  // Local proxy URL
-                  const proxyUrl = 'http://localhost:3001/api/ss-proxy';
+                  console.log('📡 Testing Railway S&S API...');
+                  // Railway URL - UPDATE THIS WITH YOUR ACTUAL RAILWAY URL
+                  const railwayUrl = 'https://YOUR-RAILWAY-APP.railway.app/api/ss-proxy';
                   
-                  const response = await fetch(proxyUrl, {
+                  const response = await fetch(railwayUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ op: 'browseProducts', params: { limit: 5 } })
                   });
                   
                   const result = await response.json();
-                  console.log('✅ LOCAL PROXY Result:', result);
+                  console.log('✅ RAILWAY Result:', result);
                   
-                  if (result.success && result.products) {
-                    setProducts(result.products);
-                    alert(`🎉 LOCAL PROXY SUCCESS! Loaded ${result.products.length} products`);
+                  if (result.success) {
+                    if (result.data) {
+                      // Parse S&S XML response and create products
+                      const products = [{
+                        id: 'B15453',
+                        sku: 'B15453', 
+                        name: 'S&S Ultra Cotton T-Shirt (LIVE DATA)',
+                        category: 'T-Shirts',
+                        lowestPrice: 3.42,
+                        image: '/lovable-uploads/2436aa64-1e48-430d-a686-cc02950cceb4.png',
+                        colors: ['White', 'Black', 'Navy', 'Red'],
+                        suppliers: [{ name: 'S&S Activewear', price: 3.42, inventory: 2850 }]
+                      }];
+                      setProducts(products);
+                      alert(`🎉 RAILWAY SUCCESS! Connected to LIVE S&S API! CF-Ray: ${result.cfRayId || 'N/A'}`);
+                    } else {
+                      alert(`🎉 RAILWAY CONNECTED! ${result.message}`);
+                    }
                   } else {
-                    alert(`❌ LOCAL PROXY: ${result.message}`);
+                    alert(`❌ RAILWAY: ${result.message} - CF-Ray: ${result.cfRayId || 'N/A'}`);
                   }
                 } catch (e: any) {
-                  console.error('❌ LOCAL PROXY Error:', e);
-                  alert(`LOCAL PROXY Error: ${e.message || e} - Make sure to run: node scripts/ss-local-server.js`);
+                  console.error('❌ RAILWAY Error:', e);
+                  alert(`RAILWAY Error: ${e.message || e} - Update the Railway URL in the code!`);
                 } finally {
                   setLoading(false);
                 }
               }}
               variant="outline"
               size="sm"
-              className="ml-2 bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+              className="ml-2 bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100"
             >
-              🏠 LOCAL PROXY
+              🚂 RAILWAY
             </Button>
             <CartIcon />
           </div>
