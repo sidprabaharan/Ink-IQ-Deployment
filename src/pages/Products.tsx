@@ -375,7 +375,7 @@ export default function Products() {
                       colors: ['White', 'Black', 'Navy', 'Red'],
                       suppliers: [{ name: 'S&S Activewear (LIVE)', price: 3.42, inventory: 2850 }]
                     }];
-                    setProducts(products);
+                    setSupplierResults(products);
                     alert(`🎉 RAILWAY SUCCESS! Got REAL S&S data! CF-Ray: ${result.cfRayId || 'N/A'}`);
                   } else if (result.fallbackData) {
                     // Using fallback sample data
@@ -389,7 +389,7 @@ export default function Products() {
                       colors: p.colors,
                       suppliers: [{ name: 'S&S Activewear (Sample)', price: p.basePrice, inventory: 1000 }]
                     }));
-                    setProducts(fallbackProducts);
+                    setSupplierResults(fallbackProducts);
                     alert(`⚠️ RAILWAY: ${result.message} - Using sample data`);
                   } else {
                     alert(`❌ RAILWAY: ${result.message} - CF-Ray: ${result.cfRayId || 'N/A'}`);
