@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Search, RefreshCw } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { ProductRow } from '@/components/products/ProductRow';
 import { ProductFilters } from '@/components/products/ProductFilters';
 import { searchCatalog } from '@/lib/promostandards/search';
@@ -13,7 +13,8 @@ import { CartManagerProvider } from '@/context/CartManagerContext';
 import { CartIcon } from '@/components/cart/CartIcon';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/lib/supabase';
-import { testVercelDirectly } from '@/lib/vercel-proxy';
+import { searchSSCatalog, mapSSProductToUnified } from '@/lib/ss-catalog';
+import { SSProductsShowcase } from '@/components/products/SSProductsShowcase';
 
 export default function Products() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -31,8 +32,88 @@ export default function Products() {
   const [totalPages, setTotalPages] = useState(0);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [hasPrevPage, setHasPrevPage] = useState(false);
+  const [useLocalCatalog, setUseLocalCatalog] = useState(true);
   
-  const itemsPerPage = 50; // Increased for full catalog browsing
+  const itemsPerPage = 100; // Show more products per page
+  
+  // Load from local S&S catalog database
+  const loadLocalCatalog = async (page: number = 1, category: string | null = null) => {
+    console.log(`🗄️ Loading from local S&S catalog - page ${page}, category: ${category || 'all'}`);
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const offset = (page - 1) * itemsPerPage;
+      
+      const result = await searchSSCatalog({
+        query: searchTerm.trim() || undefined,
+        category: category === 'All' ? undefined : category,
+        limit: itemsPerPage,
+        offset,
+      });
+      
+      // Map local catalog products to the format expected by ProductRow
+      const mappedProducts = result.products.map(mapSSProductToUnified);
+      
+      console.log('✅ Got products from local catalog:', result);
+      setSupplierResults(mappedProducts);
+      setTotalProducts(result.totalCount);
+      setTotalPages(result.totalPages);
+      setHasNextPage(result.hasNextPage);
+      setHasPrevPage(result.hasPrevPage);
+      setCatalogPage(result.page);
+      setResultsAsOf(new Date().toISOString());
+      
+      // Auto-sync ALL products in the background
+      console.log(`🔄 Auto-syncing all ${result.products.length} products with S&S APIs...`);
+      
+      // Sync all products to ensure we have the latest data
+      supabase.functions.invoke('ss-promostandards-soap', {
+        body: { 
+          op: 'syncAll'
+        }
+      }).then(response => {
+        if (response.data?.success) {
+          console.log('✅ Auto-sync completed:', response.data.message);
+          // Reload after sync completes to show updated data
+          setTimeout(() => {
+            loadLocalCatalog(page, category);
+          }, 5000);
+        }
+      }).catch(err => {
+        console.log('⚠️ Auto-sync failed:', err);
+      });
+      
+      // Also sync any products missing critical data immediately
+      const needsSync = result.products.filter((p: any) => !p.min_price || !p.primary_image_url);
+      if (needsSync.length > 0) {
+        console.log(`📸 Found ${needsSync.length} products missing data, syncing immediately...`);
+        const productIds = needsSync.map((p: any) => p.style_id);
+        supabase.functions.invoke('ss-promostandards-soap', {
+          body: { 
+            op: 'syncMultiple',
+            productIds: productIds
+          }
+        });
+      }
+      
+    } catch (e: any) {
+      console.error('❌ Error loading local catalog:', e);
+      setError(e?.message || 'Failed to load local catalog');
+      setSupplierResults(null);
+      setResultsAsOf(null);
+      
+      // Fallback to API-based loading if local catalog fails
+      if (useLocalCatalog) {
+        console.log('🔄 Falling back to API-based catalog loading');
+        setUseLocalCatalog(false);
+        await loadFullCatalog(page, category);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
   
   // Load full catalog with pagination
   const loadFullCatalog = async (page: number = 1, category: string | null = null) => {
@@ -91,77 +172,27 @@ export default function Products() {
   // Legacy function for backward compatibility
   const loadLiveProducts = () => loadFullCatalog(1);
 
-  // Railway S&S API integration
-  const loadRailwayProducts = async () => {
-    console.log('🚂 Loading products via Railway S&S API...');
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const railwayUrl = 'https://ss-railway-api-production.up.railway.app/api/ss-proxy';
-      
-      const response = await fetch(railwayUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ op: 'browseProducts', params: { limit: 10 } })
-      });
-      
-      const result = await response.json();
-      console.log('✅ RAILWAY API Result:', result);
-      
-      if (result.success && result.hasProductData) {
-        // Got real S&S data - parse XML and create products
-        console.log('🎉 RAILWAY: Got REAL S&S data!');
-        const products = [{
-          id: 'B15453',
-          sku: 'B15453', 
-          name: 'S&S Ultra Cotton T-Shirt (LIVE S&S DATA!)',
-          category: 'T-Shirts',
-          lowestPrice: 3.42,
-          image: '/lovable-uploads/2436aa64-1e48-430d-a686-cc02950cceb4.png',
-          colors: ['White', 'Black', 'Navy', 'Red'],
-          suppliers: [{ name: 'S&S Activewear (LIVE)', price: 3.42, inventory: 2850 }]
-        }];
-        setSupplierResults(products);
-        setResultsAsOf(new Date().toISOString());
-      } else if (result.fallbackData) {
-        // Using Railway's fallback sample data
-        console.log('⚠️ RAILWAY: Using sample data due to Cloudflare blocking');
-        const fallbackProducts = result.fallbackData.products.map((p: any) => ({
-          id: p.id,
-          sku: p.sku,
-          name: p.name + ' (Railway Sample)',
-          category: p.category,
-          lowestPrice: p.basePrice,
-          image: p.image,
-          colors: p.colors,
-          suppliers: [{ name: 'S&S Activewear (Sample)', price: p.basePrice, inventory: 1000 }]
-        }));
-        setSupplierResults(fallbackProducts);
-        setResultsAsOf(new Date().toISOString());
-      } else {
-        throw new Error(result.message || 'Railway API failed');
-      }
-    } catch (e: any) {
-      console.error('❌ Railway API Error:', e);
-      setError(`Railway API Error: ${e.message}`);
-      setSupplierResults(null);
-      setResultsAsOf(null);
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  // Load full catalog on page load
+  // Load catalog on page load
   useEffect(() => {
-    loadFullCatalog(1);
-  }, []);
+    if (useLocalCatalog) {
+      loadLocalCatalog(1);
+    } else {
+      loadFullCatalog(1);
+    }
+  }, [useLocalCatalog]);
 
   // Handle pagination changes
   const handlePageChange = (newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
       setCatalogPage(newPage);
-      loadFullCatalog(newPage, categoryFilter === 'All' ? null : categoryFilter);
+      const categoryParam = categoryFilter === 'All' ? null : categoryFilter;
+      
+      if (useLocalCatalog) {
+        loadLocalCatalog(newPage, categoryParam);
+      } else {
+        loadFullCatalog(newPage, categoryParam);
+      }
     }
   };
   
@@ -221,192 +252,6 @@ export default function Products() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <Button 
-              onClick={async () => {
-                console.log('🧪 Manual test button clicked');
-                localStorage.setItem('SS_USE_LOCAL_PROXY', '1');
-                const adapters = getSuppliers();
-                const ssAdapter = adapters.find(a => a.id === 'ss');
-                if (ssAdapter && 'browseProducts' in ssAdapter) {
-                  try {
-                    const products = await ssAdapter.browseProducts!({ limit: 3 });
-                    console.log('🧪 Manual test result:', products);
-                    alert(`Got ${products.length} products - check console for details`);
-                  } catch (e) {
-                    console.error('🧪 Manual test error:', e);
-                    alert(`Error: ${e}`);
-                  }
-                }
-              }}
-              variant="outline"
-              size="sm"
-            >
-              Test S&S
-            </Button>
-            <Button
-              onClick={async () => {
-                console.log('🌐 Manual REST API test triggered');
-                setLoading(true);
-                try {
-                  await loadLiveProducts();
-                  alert('REST API test complete - check console and products list');
-                } catch (e) {
-                  console.error('🌐 REST API test error:', e);
-                  alert(`REST API Error: ${e}`);
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              variant="outline"
-              size="sm"
-              className="ml-2"
-            >
-              🌐 REST API
-            </Button>
-            <Button
-              onClick={async () => {
-                console.log('📦 Manual inventory test triggered');
-                const adapters = getSuppliers();
-                const ssAdapter = adapters.find(a => a.id === 'ss');
-                if (ssAdapter && 'getInventoryBySku' in ssAdapter) {
-                  try {
-                    const inventory = await ssAdapter.getInventoryBySku!('2000');
-                    console.log('📦 Inventory test result:', inventory);
-                    alert(`Got inventory for 2000: ${inventory?.totalAvailable || 0} total units - check console for warehouse breakdown`);
-                  } catch (e) {
-                    console.error('📦 Inventory test error:', e);
-                    alert(`Inventory Error: ${e}`);
-                  }
-                }
-              }}
-              variant="outline"
-              size="sm"
-              className="ml-2"
-            >
-              📦 Inventory
-            </Button>
-            <Button
-              onClick={async () => {
-                console.log('🌐 Live S&S API test triggered');
-                setLoading(true);
-                try {
-                  const { data: { session } } = await supabase.auth.getSession();
-                  if (!session) {
-                    throw new Error('No active session');
-                  }
-                  
-                  const { data, error } = await supabase.functions.invoke('suppliers-ps', {
-                    body: { op: 'browseProductsLive', params: { limit: 5 } },
-                  });
-                  
-                  if (error) throw error;
-                  
-                  console.log('✅ Live S&S API Success:', data);
-                  setSupplierResults(data.products || []);
-                  setResultsAsOf(new Date().toISOString());
-                  alert(`Live S&S Success! Got ${data.count} real products from S&S API - check console for details`);
-                } catch (e: any) {
-                  console.error('❌ Live S&S API Error:', e);
-                  alert(`Live S&S Error: ${e.message || e}`);
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              variant="outline"
-              size="sm"
-              className="ml-2 bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
-            >
-              🔥 Live S&S
-            </Button>
-            <Button
-              onClick={async () => {
-                console.log('🚀 BROWSER S&S test triggered');
-                setLoading(true);
-                try {
-                  console.log('📡 Testing S&S API directly from browser...');
-                  const result = await testVercelDirectly();
-                  console.log('✅ Browser S&S Result:', result);
-                  
-                  if (result.success) {
-                    alert(`🎉 SUCCESS! ${result.message} - check console for details`);
-                  } else {
-                    alert(`❌ ${result.message} - check console for details`);
-                  }
-                } catch (e: any) {
-                  console.error('❌ Browser S&S Error:', e);
-                  alert(`Browser S&S Error: ${e.message || e}`);
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              variant="outline"
-              size="sm"
-              className="ml-2 bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100"
-            >
-              🌐 Direct S&S
-            </Button>
-            <Button
-              onClick={async () => {
-                console.log('🚂 RAILWAY test triggered');
-                setLoading(true);
-                try {
-                  console.log('📡 Testing Railway S&S API...');
-                  // Railway URL - LIVE DEPLOYMENT
-                  const railwayUrl = 'https://ss-railway-api-production.up.railway.app/api/ss-proxy';
-                  
-                  const response = await fetch(railwayUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ op: 'browseProducts', params: { limit: 5 } })
-                  });
-                  
-                  const result = await response.json();
-                  console.log('✅ RAILWAY Result:', result);
-                  
-                  if (result.success && result.hasProductData) {
-                    // Got real S&S data!
-                    const products = [{
-                      id: 'B15453',
-                      sku: 'B15453', 
-                      name: 'S&S Ultra Cotton T-Shirt (LIVE S&S DATA!)',
-                      category: 'T-Shirts',
-                      lowestPrice: 3.42,
-                      image: '/lovable-uploads/2436aa64-1e48-430d-a686-cc02950cceb4.png',
-                      colors: ['White', 'Black', 'Navy', 'Red'],
-                      suppliers: [{ name: 'S&S Activewear (LIVE)', price: 3.42, inventory: 2850 }]
-                    }];
-                    setSupplierResults(products);
-                    alert(`🎉 RAILWAY SUCCESS! Got REAL S&S data! CF-Ray: ${result.cfRayId || 'N/A'}`);
-                  } else if (result.fallbackData) {
-                    // Using fallback sample data
-                    const fallbackProducts = result.fallbackData.products.map((p: any) => ({
-                      id: p.id,
-                      sku: p.sku,
-                      name: p.name + ' (Railway Sample)',
-                      category: p.category,
-                      lowestPrice: p.basePrice,
-                      image: p.image,
-                      colors: p.colors,
-                      suppliers: [{ name: 'S&S Activewear (Sample)', price: p.basePrice, inventory: 1000 }]
-                    }));
-                    setSupplierResults(fallbackProducts);
-                    alert(`⚠️ RAILWAY: ${result.message} - Using sample data`);
-                  } else {
-                    alert(`❌ RAILWAY: ${result.message} - CF-Ray: ${result.cfRayId || 'N/A'}`);
-                  }
-                } catch (e: any) {
-                  console.error('❌ RAILWAY Error:', e);
-                  alert(`RAILWAY Error: ${e.message || e} - Update the Railway URL in the code!`);
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              variant="outline"
-              size="sm"
-              className="ml-2 bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100"
-            >
-              🚂 RAILWAY
-            </Button>
             <CartIcon />
           </div>
         </div>
@@ -450,21 +295,15 @@ export default function Products() {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button variant="outline" size="sm" className="flex items-center gap-1">
-                  <RefreshCw className="h-4 w-4" />
-                  Refresh Carts
-                </Button>
-                <Button 
-                  onClick={loadRailwayProducts}
-                  variant="outline" 
-                  size="sm" 
-                  className="flex items-center gap-1 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
-                  disabled={loading}
-                >
-                  🚂 Railway S&S
-                </Button>
               </div>
             </div>
+
+            {/* S&S Products Showcase - Enhanced Products with Images & Pricing */}
+            {useLocalCatalog && (
+              <div className="mb-6">
+                <SSProductsShowcase limit={6} />
+              </div>
+            )}
             
             {/* Product Listing Cards */}
             <div className="space-y-2">
@@ -532,6 +371,7 @@ export default function Products() {
             )}
           </div>
         </div>
+        
       </div>
   );
 }

@@ -1,0 +1,3 @@
+[functions.ss-inventory-sync]
+verify_jwt = false
+

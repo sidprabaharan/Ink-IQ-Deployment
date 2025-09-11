@@ -1,0 +1,4 @@
+[functions.ss-catalog-sync]
+verify_jwt = false
+
+
