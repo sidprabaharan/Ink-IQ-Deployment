@@ -2,10 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
-import { ExternalLink, ShoppingCart, Palette, Star } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ExternalLink, ShoppingCart, Palette, Star, Info, ChevronDown, ChevronUp, Package } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { SSProduct } from '@/lib/ss-catalog';
+import { ProductInventoryMatrix } from './ProductInventoryMatrix';
+import { ProductSpecifications } from './ProductSpecifications';
+import { ShippingCalculator } from './ShippingCalculator';
 
 interface SSProductsShowcaseProps {
   limit?: number;
@@ -15,6 +20,10 @@ export function SSProductsShowcase({ limit = 6 }: SSProductsShowcaseProps) {
   const [products, setProducts] = useState<SSProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
+  const [selectedProduct, setSelectedProduct] = useState<SSProduct | null>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [inventoryData, setInventoryData] = useState<Record<string, any>>({});
 
   useEffect(() => {
     loadLatestProducts();
@@ -37,11 +46,49 @@ export function SSProductsShowcase({ limit = 6 }: SSProductsShowcaseProps) {
       if (queryError) throw queryError;
 
       setProducts(data || []);
+      
+      // Load inventory summary for each product
+      if (data && data.length > 0) {
+        loadInventorySummaries(data);
+      }
     } catch (err) {
       console.error('Failed to load S&S products:', err);
       setError(err instanceof Error ? err.message : 'Failed to load products');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadInventorySummaries = async (products: SSProduct[]) => {
+    for (const product of products) {
+      try {
+        // Get variant count and total stock
+        const { data: variants } = await supabase
+          .from('ss_product_variants')
+          .select(`
+            id,
+            ss_inventory_levels(quantity_available)
+          `)
+          .eq('product_id', product.id);
+
+        if (variants && variants.length > 0) {
+          const totalStock = variants.reduce((sum, v) => {
+            const stock = v.ss_inventory_levels?.reduce((s: number, inv: any) => s + (inv.quantity_available || 0), 0) || 0;
+            return sum + stock;
+          }, 0);
+
+          setInventoryData(prev => ({
+            ...prev,
+            [product.id]: {
+              variantCount: variants.length,
+              totalStock,
+              hasStock: totalStock > 0
+            }
+          }));
+        }
+      } catch (err) {
+        console.error(`Error loading inventory for ${product.style_id}:`, err);
+      }
     }
   };
 
@@ -70,6 +117,23 @@ export function SSProductsShowcase({ limit = 6 }: SSProductsShowcaseProps) {
   const processBrandName = (brand: string | null) => {
     if (!brand || brand === 'S&S Activewear') return 'S&S';
     return brand;
+  };
+
+  const toggleDescription = (productId: string) => {
+    setExpandedDescriptions(prev => ({
+      ...prev,
+      [productId]: !prev[productId]
+    }));
+  };
+
+  const openProductDetail = (product: SSProduct) => {
+    setSelectedProduct(product);
+    setShowDetailModal(true);
+  };
+
+  const formatDescription = (description: string | null | undefined) => {
+    if (!description) return [];
+    return description.split('\n').filter(line => line.trim().startsWith('•'));
   };
 
   if (loading) {
@@ -137,8 +201,9 @@ export function SSProductsShowcase({ limit = 6 }: SSProductsShowcaseProps) {
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <>
+      <Card>
+        <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Star className="w-5 h-5 text-blue-600" />
           Latest S&S Products  
@@ -229,6 +294,24 @@ export function SSProductsShowcase({ limit = 6 }: SSProductsShowcaseProps) {
                   </Badge>
                 </div>
 
+                {/* Quick Inventory Status */}
+                <div className="flex items-center gap-2 text-xs">
+                  <Package className="w-3 h-3 text-gray-500" />
+                  <span className="text-gray-600">
+                    {inventoryData[product.id] ? (
+                      inventoryData[product.id].hasStock ? (
+                        <>
+                          {inventoryData[product.id].variantCount} variants • {inventoryData[product.id].totalStock.toLocaleString()} units in stock
+                        </>
+                      ) : (
+                        'Check availability'
+                      )
+                    ) : (
+                      'Loading inventory...'
+                    )}
+                  </span>
+                </div>
+
                 {/* Colors preview */}
                 {product.colors && Array.isArray(product.colors) && product.colors.length > 0 && (
                   <div className="flex items-center gap-1">
@@ -261,13 +344,47 @@ export function SSProductsShowcase({ limit = 6 }: SSProductsShowcaseProps) {
                   </div>
                 )}
 
+                {/* Description section */}
+                {product.description && (
+                  <div className="mt-2">
+                    <button
+                      onClick={() => toggleDescription(product.id)}
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 transition-colors"
+                    >
+                      {expandedDescriptions[product.id] ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      {expandedDescriptions[product.id] ? 'Hide' : 'Show'} Specifications
+                    </button>
+                    
+                    {expandedDescriptions[product.id] && (
+                      <div className="mt-2 p-3 bg-gray-50 rounded-md text-xs space-y-1 border border-gray-100">
+                        {formatDescription(product.description).slice(0, 4).map((line, idx) => (
+                          <div key={idx} className="text-gray-700">{line}</div>
+                        ))}
+                        {formatDescription(product.description).length > 4 && (
+                          <button
+                            onClick={() => openProductDetail(product)}
+                            className="text-blue-600 hover:text-blue-700 font-medium mt-2"
+                          >
+                            View All Specifications →
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <Separator />
 
                 <div className="flex items-center justify-between text-xs text-gray-500">
                   <span>Updated {new Date(product.last_synced).toLocaleDateString()}</span>
-                  <Button variant="ghost" size="sm" className="h-6 text-xs p-1">
-                    View Details
-                    <ExternalLink className="w-3 h-3 ml-1" />
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-6 text-xs p-1"
+                    onClick={() => openProductDetail(product)}
+                  >
+                    View Full Details
+                    <Info className="w-3 h-3 ml-1" />
                   </Button>
                 </div>
               </div>
@@ -276,5 +393,140 @@ export function SSProductsShowcase({ limit = 6 }: SSProductsShowcaseProps) {
         </div>
       </CardContent>
     </Card>
+
+    {/* Product Detail Modal */}
+    <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
+      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+        {selectedProduct && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold">
+                {selectedProduct.name}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-gray-600">
+                <span className="font-medium">{selectedProduct.sku}</span>
+                {selectedProduct.brand && (
+                  <>
+                    {' • '}
+                    <span>{processBrandName(selectedProduct.brand)}</span>
+                  </>
+                )}
+                {selectedProduct.category && (
+                  <>
+                    {' • '}
+                    <span>{selectedProduct.category}</span>
+                  </>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+
+            <Tabs defaultValue="overview" className="mt-6">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="overview">Overview & Specifications</TabsTrigger>
+                <TabsTrigger value="inventory">
+                  <Package className="w-4 h-4 mr-2" />
+                  Inventory & Pricing
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="overview" className="space-y-6">
+                {/* Product Image */}
+                {getImageUrl(selectedProduct.primary_image_url) && (
+                  <div className="relative aspect-square w-full max-w-md mx-auto bg-gray-100 rounded-lg overflow-hidden">
+                    <img
+                      src={getImageUrl(selectedProduct.primary_image_url)!}
+                      alt={selectedProduct.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
+
+                {/* Price */}
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600">
+                    {formatPrice(selectedProduct.min_price, selectedProduct.max_price, selectedProduct.currency)}
+                  </div>
+                  <p className="text-sm text-gray-500 mt-1">Price varies by quantity and options</p>
+                </div>
+
+                {/* Full Specifications */}
+                {selectedProduct.description && (
+                  <div>
+                    <h3 className="font-semibold text-lg mb-3 flex items-center gap-2">
+                      <Info className="w-5 h-5" />
+                      Product Specifications
+                    </h3>
+                    <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                      {formatDescription(selectedProduct.description).map((line, idx) => (
+                        <div key={idx} className="text-sm text-gray-700 flex items-start">
+                          <span className="mr-2">{line}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              {/* Additional Product Info */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {selectedProduct.is_closeout && (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="destructive">Closeout Item</Badge>
+                    <span className="text-xs text-gray-500">Limited availability</span>
+                  </div>
+                )}
+                {selectedProduct.is_on_demand && (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">On Demand</Badge>
+                    <span className="text-xs text-gray-500">Made to order</span>
+                  </div>
+                )}
+                {selectedProduct.colors && selectedProduct.colors.length > 0 && (
+                  <div className="col-span-2">
+                    <span className="font-medium">Available Colors:</span>
+                    <div className="flex gap-1 mt-1 flex-wrap">
+                      {selectedProduct.colors.map((color: any, index: number) => {
+                        const colorHex = color.hex || color.color_hex || '#ccc';
+                        return (
+                          <div
+                            key={index}
+                            className="w-6 h-6 rounded-full border border-gray-300 relative group"
+                            style={{ backgroundColor: colorHex }}
+                          >
+                            <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                              {color.name || color.color_name || 'Color'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+                {/* Action Buttons */}
+                <div className="flex gap-3 pt-4">
+                  <Button className="flex-1" size="lg">
+                    <ShoppingCart className="w-4 h-4 mr-2" />
+                    Add to Cart
+                  </Button>
+                  <Button variant="outline" size="lg" className="flex-1">
+                    <Palette className="w-4 h-4 mr-2" />
+                    Customize Design
+                  </Button>
+                </div>
+
+                {/* Product Specifications Component */}
+                <ProductSpecifications product={selectedProduct as any} />
+              </TabsContent>
+
+              <TabsContent value="inventory" className="mt-6">
+                <ProductInventoryMatrix product={selectedProduct} />
+              </TabsContent>
+            </Tabs>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

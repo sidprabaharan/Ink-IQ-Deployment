@@ -38,6 +38,14 @@ interface ProductDataResponse {
     isCaution?: boolean;
     isOnDemand?: boolean;
     isHazmat?: boolean;
+    isRushService?: boolean;
+    weight?: number;
+    width?: number;
+    height?: number;
+    depth?: number;
+    unitsPerCarton?: number;
+    cartonWeight?: number;
+    gtin?: string;
     ProductPartArray?: Array<{
       partId: string;
       ColorArray?: Array<{
@@ -263,12 +271,38 @@ function parseProductDataResponse(soapXml: string): ProductDataResponse {
     const productBrandMatch = soapXml.match(/<productBrand[^>]*>(.*?)<\/productBrand>/i);
     const descriptionMatch = soapXml.match(/<description[^>]*>(.*?)<\/description>/i);
     
+    // Extract critical product attributes
+    const isCloseoutMatch = soapXml.match(/<isCloseout[^>]*>(.*?)<\/isCloseout>/i);
+    const isRushServiceMatch = soapXml.match(/<rushService[^>]*>(.+?)<\/rushService>/i);
+    
+    // Extract dimensions
+    const weightMatch = soapXml.match(/<Dimension[^>]*>[\s\S]*?<weight[^>]*>(.*?)<\/weight>/i);
+    const widthMatch = soapXml.match(/<Dimension[^>]*>[\s\S]*?<width[^>]*>(.*?)<\/width>/i);
+    const heightMatch = soapXml.match(/<Dimension[^>]*>[\s\S]*?<height[^>]*>(.*?)<\/height>/i);
+    const depthMatch = soapXml.match(/<Dimension[^>]*>[\s\S]*?<depth[^>]*>(.*?)<\/depth>/i);
+    
+    // Extract packaging info
+    const packagingMatch = soapXml.match(/<ProductPackagingArray>[\s\S]*?<\/ProductPackagingArray>/i);
+    let unitsPerCarton: number | undefined;
+    let cartonWeight: number | undefined;
+    
+    if (packagingMatch) {
+      const defaultMatch = packagingMatch[0].match(/<Default[^>]*>(.*?)<\/Default>/i);
+      const pkgWeightMatch = packagingMatch[0].match(/<Weight[^>]*>(.*?)<\/Weight>/i);
+      
+      unitsPerCarton = defaultMatch ? parseInt(defaultMatch[1]) : undefined;
+      cartonWeight = pkgWeightMatch ? parseFloat(pkgWeightMatch[1]) : undefined;
+    }
+    
     // Log what we found for debugging
     console.log('🔍 SOAP Response Analysis:');
     console.log(`📦 Product ID: ${productIdMatch?.[1] || 'NOT FOUND'}`);
     console.log(`📛 Product Name: ${productNameMatch?.[1] || 'NOT FOUND'}`);
     console.log(`🖼️ Primary Image URL: ${primaryImageMatch?.[1] || 'NOT FOUND'}`);
     console.log(`📝 Description: ${descriptionMatch?.[1]?.substring(0, 100) || 'NOT FOUND'}...`);
+    console.log(`📏 Dimensions: W:${widthMatch?.[1]} H:${heightMatch?.[1]} D:${depthMatch?.[1]} Weight:${weightMatch?.[1]}`);
+    console.log(`📦 Packaging: ${unitsPerCarton} units/carton, ${cartonWeight} lbs`);
+    console.log(`🚨 Flags: Closeout:${isCloseoutMatch?.[1]} Rush:${isRushServiceMatch?.[1]}`);
     
     // Also try to extract pricing from ProductPriceGroupArray if present in product data
     let extractedPrice: number | undefined;
@@ -311,6 +345,14 @@ function parseProductDataResponse(soapXml: string): ProductDataResponse {
         description: descriptionMatch?.[1],
         primaryImageURL: imageURL,
         extractedPrice: extractedPrice, // Include pricing if found
+        isCloseout: isCloseoutMatch?.[1]?.toLowerCase() === 'true',
+        isRushService: isRushServiceMatch?.[1]?.toLowerCase() === 'true',
+        weight: weightMatch ? parseFloat(weightMatch[1]) : undefined,
+        width: widthMatch ? parseFloat(widthMatch[1]) : undefined,
+        height: heightMatch ? parseFloat(heightMatch[1]) : undefined,
+        depth: depthMatch ? parseFloat(depthMatch[1]) : undefined,
+        unitsPerCarton: unitsPerCarton,
+        cartonWeight: cartonWeight,
       });
     }
     
@@ -515,6 +557,212 @@ async function getMediaContent(productId: string): Promise<Array<{ url: string; 
     console.error(`❌ PromoStandards MediaContent error for ${productId}:`, error);
     throw error;
   }
+}
+
+// Parse Inventory response from PromoStandards 2.0.0
+function parseInventoryResponse(soapXml: string): {
+  productId: string;
+  parts: Array<{
+    partId: string;
+    mainPart?: boolean;
+    color: string;
+    size: string;
+    description?: string;
+    quantityAvailable: number;
+    inventoryByLocation: Array<{
+      locationId: string;
+      locationName: string;
+      quantity: number;
+      address?: {
+        city?: string;
+        state?: string;
+        postalCode?: string;
+      };
+    }>;
+  }>;
+} {
+  try {
+    console.log('📦 Parsing Inventory response...');
+    
+    // Extract productId
+    const productIdMatch = soapXml.match(/<productId[^>]*>(.*?)<\/productId>/i);
+    const productId = productIdMatch?.[1] || '';
+    
+    const parts: any[] = [];
+    
+    // Look for PartInventoryArray -> PartInventory items
+    const partInventoryMatches = soapXml.match(/<PartInventory>[\s\S]*?<\/PartInventory>/g) || [];
+    console.log(`🔍 Found ${partInventoryMatches.length} PartInventory elements`);
+    
+    for (const partMatch of partInventoryMatches) {
+      const partIdMatch = partMatch.match(/<partId[^>]*>(.*?)<\/partId>/i);
+      const mainPartMatch = partMatch.match(/<mainPart[^>]*>(.*?)<\/mainPart>/i);
+      const partColorMatch = partMatch.match(/<partColor[^>]*>(.*?)<\/partColor>/i);
+      const labelSizeMatch = partMatch.match(/<labelSize[^>]*>(.*?)<\/labelSize>/i);
+      const partDescriptionMatch = partMatch.match(/<partDescription[^>]*>(.*?)<\/partDescription>/i);
+      
+      // Extract total quantity available
+      const quantityValueMatch = partMatch.match(/<quantityAvailable>[\s\S]*?<value[^>]*>(.*?)<\/value>/i);
+      const quantityAvailable = parseFloat(quantityValueMatch?.[1] || '0');
+      
+      // Extract inventory by location
+      const inventoryByLocation: any[] = [];
+      const locationMatches = partMatch.match(/<InventoryLocation>[\s\S]*?<\/InventoryLocation>/g) || [];
+      
+      for (const locationMatch of locationMatches) {
+        const locationIdMatch = locationMatch.match(/<inventoryLocationId[^>]*>(.*?)<\/inventoryLocationId>/i);
+        const locationNameMatch = locationMatch.match(/<inventoryLocationName[^>]*>(.*?)<\/inventoryLocationName>/i);
+        const locationQtyMatch = locationMatch.match(/<inventoryLocationQuantity>[\s\S]*?<value[^>]*>(.*?)<\/value>/i);
+        
+        // Extract address info
+        const cityMatch = locationMatch.match(/<city[^>]*>(.*?)<\/city>/i);
+        const stateMatch = locationMatch.match(/<state[^>]*>(.*?)<\/state>/i);
+        const postalCodeMatch = locationMatch.match(/<postalCode[^>]*>(.*?)<\/postalCode>/i);
+        
+        if (locationIdMatch) {
+          inventoryByLocation.push({
+            locationId: locationIdMatch[1],
+            locationName: locationNameMatch?.[1] || locationIdMatch[1],
+            quantity: parseFloat(locationQtyMatch?.[1] || '0'),
+            address: {
+              city: cityMatch?.[1],
+              state: stateMatch?.[1],
+              postalCode: postalCodeMatch?.[1]
+            }
+          });
+        }
+      }
+      
+      if (partIdMatch) {
+        parts.push({
+          partId: partIdMatch[1],
+          mainPart: mainPartMatch?.[1] === 'true',
+          color: partColorMatch?.[1] || '',
+          size: labelSizeMatch?.[1] || '',
+          description: partDescriptionMatch?.[1],
+          quantityAvailable,
+          inventoryByLocation
+        });
+      }
+    }
+    
+    console.log(`✅ Parsed inventory for ${productId}: ${parts.length} variants across ${parts[0]?.inventoryByLocation.length || 0} locations`);
+    
+    return {
+      productId,
+      parts
+    };
+  } catch (error) {
+    console.error('❌ Error parsing inventory response:', error);
+    return {
+      productId: '',
+      parts: []
+    };
+  }
+}
+
+// Get inventory levels from S&S PromoStandards
+async function getInventoryLevels(productId: string): Promise<any> {
+  console.log(`📦 Getting inventory levels for ${productId} from PromoStandards Inventory Service 2.0.0...`);
+  
+  const request = {
+    wsVersion: '2.0.0',
+    id: SS_CONFIG.accountNumber,
+    password: SS_CONFIG.apiKey,
+  };
+
+  const soapEnvelope = createGetInventorySOAP(productId, request);
+  
+  try {
+    const soapResponse = await callPromoStandardsSOAP(SS_CONFIG.inventoryEndpoint, soapEnvelope, 'getInventoryLevels');
+    const inventoryData = parseInventoryResponse(soapResponse);
+    
+    console.log(`📦 Retrieved inventory for ${productId}:`);
+    console.log(`   - ${inventoryData.parts.length} variants (sizes/colors)`);
+    console.log(`   - ${inventoryData.parts[0]?.inventoryByLocation.length || 0} warehouse locations`);
+    
+    // Log sample data
+    if (inventoryData.parts.length > 0) {
+      const samplePart = inventoryData.parts[0];
+      console.log(`   - Sample: ${samplePart.color} / ${samplePart.size} = ${samplePart.quantityAvailable} total`);
+      samplePart.inventoryByLocation.forEach(loc => {
+        console.log(`     - ${loc.locationId}: ${loc.quantity} units`);
+      });
+    }
+    
+    return inventoryData;
+  } catch (error) {
+    console.error(`❌ PromoStandards Inventory error for ${productId}:`, error);
+    throw error;
+  }
+}
+
+// Save inventory data to database
+async function saveInventoryToDatabase(productId: string, inventoryData: any): Promise<void> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  console.log(`💾 Saving inventory data for ${productId} to database...`);
+
+  // First, get the product record
+  const { data: product, error: productError } = await supabase
+    .from('ss_products')
+    .select('id')
+    .eq('style_id', productId)
+    .single();
+
+  if (productError || !product) {
+    console.error(`❌ Product ${productId} not found in database`);
+    return;
+  }
+
+  // Process each variant
+  for (const part of inventoryData.parts) {
+    // Upsert variant
+    const { data: variant, error: variantError } = await supabase
+      .from('ss_product_variants')
+      .upsert({
+        product_id: product.id,
+        part_id: part.partId,
+        color_name: part.color,
+        size_label: part.size,
+        description: part.description,
+        is_main_part: part.mainPart || false,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'product_id,part_id',
+        ignoreDuplicates: false
+      })
+      .select('id')
+      .single();
+
+    if (variantError) {
+      console.error(`❌ Error saving variant ${part.partId}:`, variantError);
+      continue;
+    }
+
+    // Save inventory levels for each warehouse
+    for (const location of part.inventoryByLocation) {
+      const { error: inventoryError } = await supabase
+        .from('ss_inventory_levels')
+        .upsert({
+          variant_id: variant.id,
+          warehouse_id: location.locationId,
+          quantity_available: location.quantity,
+          quantity_on_hand: location.quantity,
+          last_updated: new Date().toISOString()
+        }, {
+          onConflict: 'variant_id,warehouse_id'
+        });
+
+      if (inventoryError) {
+        console.error(`❌ Error saving inventory for ${part.partId} at ${location.locationId}:`, inventoryError);
+      }
+    }
+  }
+
+  console.log(`✅ Saved inventory data for ${productId}: ${inventoryData.parts.length} variants`);
 }
 
 // Get pricing data from S&S PromoStandards
@@ -749,6 +997,7 @@ async function updateProductWithSOAPData(productId: string, productData?: Produc
   console.log(`💰 Getting LIVE pricing from PromoStandards for ${productId}...`);
   let realMinPrice: number | undefined;
   let realMaxPrice: number | undefined;
+  const fobPricing: Array<{ fobId: string; prices: Array<{ quantity: number; price: number }> }> = [];
   
   try {
     const pricingData = await getPricingData(productId);
@@ -756,6 +1005,23 @@ async function updateProductWithSOAPData(productId: string, productData?: Produc
       realMinPrice = pricingData.minPrice;
       realMaxPrice = pricingData.maxPrice;
       console.log(`💰 ✅ LIVE PRICING from S&S API: ${productId} = $${realMinPrice} - $${realMaxPrice}`);
+      
+      // Also save FOB-specific pricing
+      if (pricingData.prices && Array.isArray(pricingData.prices)) {
+        // Group prices by FOB
+        const pricesByFob: Record<string, Array<{ quantity: number; price: number }>> = {};
+        for (const price of pricingData.prices) {
+          const fobId = (price as any).fobId || 'IL'; // Default to IL if not specified
+          if (!pricesByFob[fobId]) pricesByFob[fobId] = [];
+          pricesByFob[fobId].push({ quantity: price.quantity, price: price.price });
+        }
+        
+        // Convert to array format
+        for (const [fobId, prices] of Object.entries(pricesByFob)) {
+          fobPricing.push({ fobId, prices });
+          console.log(`💰 FOB ${fobId}: ${prices.length} price breaks`);
+        }
+      }
     } else {
       console.log(`💰 ⚠️ Pricing API returned empty data for ${productId}, checking response format...`);
       // Log the actual pricing response for debugging
@@ -804,6 +1070,23 @@ async function updateProductWithSOAPData(productId: string, productData?: Produc
     },
   };
 
+  // Add critical product attributes if available
+  if (productData?.products?.[0]) {
+    const product = productData.products[0];
+    if (product.weight !== undefined) updateData.weight = product.weight;
+    if (product.width !== undefined) updateData.width = product.width;
+    if (product.height !== undefined) updateData.height = product.height;
+    if (product.depth !== undefined) updateData.depth = product.depth;
+    if (product.unitsPerCarton !== undefined) updateData.units_per_carton = product.unitsPerCarton;
+    if (product.cartonWeight !== undefined) updateData.carton_weight = product.cartonWeight;
+    if (product.isCloseout !== undefined) updateData.is_closeout = product.isCloseout;
+    if (product.isRushService !== undefined) updateData.is_rush_service = product.isRushService;
+    if (product.gtin) updateData.gtin = product.gtin;
+    
+    console.log(`📏 Product attributes: Weight: ${product.weight}, Dimensions: ${product.width}x${product.height}x${product.depth}`);
+    console.log(`📦 Packaging: ${product.unitsPerCarton} units/carton, ${product.cartonWeight} lbs`);
+  }
+
   // Add pricing if we got real data
   if (realMinPrice && realMaxPrice) {
     updateData.min_price = realMinPrice;
@@ -834,6 +1117,39 @@ async function updateProductWithSOAPData(productId: string, productData?: Produc
   }
   if (realMinPrice && realMaxPrice) {
     console.log(`💰 Real pricing: $${realMinPrice} - $${realMaxPrice}`);
+  }
+
+  // Save FOB-specific pricing if available
+  if (fobPricing.length > 0) {
+    console.log(`💰 Saving FOB-specific pricing for ${productId}...`);
+    
+    // Get the product ID from database
+    const { data: productRecord } = await supabase
+      .from('ss_products')
+      .select('id')
+      .eq('style_id', productId)
+      .single();
+    
+    if (productRecord) {
+      for (const fob of fobPricing) {
+        for (const price of fob.prices) {
+          await supabase
+            .from('ss_pricing_by_fob')
+            .upsert({
+              product_id: productRecord.id,
+              fob_id: fob.fobId,
+              quantity_min: price.quantity,
+              price: price.price,
+              currency: 'USD',
+              price_uom: 'EA',
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'product_id,fob_id,quantity_min'
+            });
+        }
+      }
+      console.log(`✅ Saved ${fobPricing.reduce((sum, fob) => sum + fob.prices.length, 0)} FOB price points`);
+    }
   }
 }
 
@@ -905,13 +1221,16 @@ Deno.serve(async (req: Request) => {
       const soapEnvelope = createGetInventorySOAP(productId, request);
       
       try {
-        const soapResponse = await callPromoStandardsSOAP(SS_CONFIG.inventoryEndpoint, soapEnvelope);
+        const inventoryData = await getInventoryLevels(productId);
+        
+        // Save to database
+        await saveInventoryToDatabase(productId, inventoryData);
         
         return new Response(JSON.stringify({
           success: true,
           operation: 'getInventory',
           productId,
-          data: { rawResponse: soapResponse },
+          data: inventoryData,
           timestamp: new Date().toISOString(),
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1240,6 +1559,16 @@ Deno.serve(async (req: Request) => {
           
           // Update with SOAP data
           await updateProductWithSOAPData(productId, productData);
+          
+          // Also sync inventory data
+          try {
+            const inventoryData = await getInventoryLevels(productId);
+            await saveInventoryToDatabase(productId, inventoryData);
+            console.log(`✅ Synced inventory for ${productId}`);
+          } catch (invError) {
+            console.log(`⚠️ Could not sync inventory for ${productId}:`, invError);
+          }
+          
           updated++;
         } catch (error) {
           console.error(`Failed to sync ${product.style_id}:`, error);

@@ -53,7 +53,8 @@ export function ProductRow({ product, showVendors, showPrices, resultsAsOf }: Pr
       ? Object.keys(selectedSupplier.inventoryByWarehouseSize)
       : [];
     if (whs.length > 0) return whs;
-    return ['DALLAS, TX', 'MEMPHIS, TN', 'GILDAN DISTRIBUTION CENTER'];
+    // Use actual S&S warehouse locations as fallback
+    return ['Lockport, IL', 'Farmers Branch, TX', 'Robbinsville, NJ', 'Lithia Springs, GA', 'Reno, NV', 'Olathe, KS'];
   }, [selectedSupplier]);
   
   // Select first color as default expanded color

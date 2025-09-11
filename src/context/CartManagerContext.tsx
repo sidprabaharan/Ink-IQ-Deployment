@@ -342,14 +342,61 @@ export const CartManagerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const cart = carts.find(c => c.id === cartId);
     if (!cart) throw new Error('Cart not found');
     
-    // Update cart status
-    updateCart(cartId, { status: 'submitted' });
+    if (cart.items.length === 0) {
+      throw new Error('Cannot create PO from empty cart');
+    }
     
-    // In a real app, this would call an API
-    const poId = `PO-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
-    
-    toast.success(`Purchase Order ${poId} created successfully!`);
-    return poId;
+    try {
+      // Import supabase dynamically to avoid issues
+      const { supabase } = await import('@/lib/supabase');
+      
+      // Create the purchase order
+      const { data: poData, error: poError } = await supabase
+        .from('purchase_orders')
+        .insert({
+          supplier_id: 'SS',
+          supplier_name: 'S&S Activewear',
+          buyer_name: 'Cart User',
+          buyer_email: 'user@example.com',
+          status: 'draft'
+        })
+        .select()
+        .single();
+
+      if (poError) throw poError;
+
+      // Create PO items from cart items
+      const poItems = cart.items.flatMap((item: CartItem) => 
+        item.quantities.map(qty => ({
+          po_id: poData.id,
+          sku: item.sku,
+          product_name: item.name,
+          brand: item.supplierName,
+          size: qty.size,
+          quantity: qty.quantity,
+          unit_price: item.price,
+          line_total: item.price * qty.quantity,
+          ship_from_warehouse: qty.location
+        }))
+      );
+
+      const { error: itemsError } = await supabase
+        .from('purchase_order_items')
+        .insert(poItems);
+
+      if (itemsError) throw itemsError;
+
+      // Update cart status
+      updateCart(cartId, { status: 'submitted' });
+      
+      toast.success(`Purchase Order ${poData.po_number} created successfully!`);
+      return poData.po_number;
+      
+    } catch (error) {
+      console.error('Error creating PO:', error);
+      toast.error('Failed to create purchase order');
+      throw error;
+    }
   };
   
   const saveCartTemplate = (cartId: string, templateName: string) => {

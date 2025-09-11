@@ -1,585 +1,571 @@
-
 import React, { useState, useEffect } from 'react';
-import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
-import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Plus, Filter, Eye, FileText, ShoppingCart, Package, History, Edit2, Trash2, Send, Download } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { useCartManager } from '@/context/CartManagerContext';
+import { 
+  FileText, 
+  Search, 
+  Download, 
+  Send, 
+  Eye, 
+  Edit, 
+  Trash2,
+  Calendar,
+  DollarSign,
+  Package,
+  Building2,
+  User,
+  Filter
+} from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { PurchaseOrderManager } from '@/components/orders/PurchaseOrderManager';
 
-import { EditableCartItem } from '@/components/cart/EditableCartItem';
-import { CartDetailsSheet } from '@/components/cart/CartDetailsSheet';
+interface PurchaseOrder {
+  id: string;
+  po_number: string;
+  supplier_id: string;
+  supplier_name: string;
+  buyer_name?: string;
+  buyer_email?: string;
+  buyer_company?: string;
+  po_date: string;
+  requested_ship_date?: string;
+  status: string;
+  subtotal: number;
+  tax_amount: number;
+  shipping_amount: number;
+  total_amount: number;
+  special_instructions?: string;
+  created_at: string;
+  payment_terms?: string;
+  shipping_method?: string;
+}
 
-// Mock data for purchase orders
-const initialPurchaseOrders = [
-  {
-    id: "PO-2023-001",
-    supplier: "SanMar",
-    dateCreated: "2023-05-15",
-    status: "Delivered",
-    total: 1250.75,
-    poNumber: "CUST-001",
-    items: [
-      { id: 1, name: "Gildan Heavy Cotton T-Shirt", sku: "GIL2000", quantity: 100, price: 3.25, total: 325 },
-      { id: 2, name: "Port & Company Essential Tee", sku: "PC61", quantity: 150, price: 3.10, total: 465 },
-      { id: 3, name: "Next Level Cotton T-Shirt", sku: "NL3600", quantity: 100, price: 4.50, total: 450 }
-    ]
-  },
-  {
-    id: "PO-2023-002",
-    supplier: "Alphabroder",
-    dateCreated: "2023-06-02",
-    status: "Shipped",
-    poNumber: "CUST-002",
-    total: 825.50,
-    items: [
-      { id: 1, name: "Fruit of the Loom Sweatshirt", sku: "FRT1200", quantity: 100, price: 8.25, total: 825.50 }
-    ]
-  },
-  {
-    id: "PO-2023-003",
-    supplier: "S&S Activewear",
-    dateCreated: "2023-06-10",
-    status: "Processing",
-    poNumber: "CUST-003",
-    total: 1687.50,
-    items: [
-      { id: 1, name: "Jerzees Hoodie", sku: "JRZ996", quantity: 75, price: 12.50, total: 937.50 },
-      { id: 2, name: "Next Level Cotton T-Shirt", sku: "NL3600", quantity: 150, price: 4.35, total: 652.50 },
-      { id: 3, name: "Gildan Heavy Cotton T-Shirt", sku: "GIL2000", quantity: 50, price: 3.35, total: 167.50 }
-    ]
-  },
-  {
-    id: "PO-2023-004",
-    supplier: "TSC Apparel",
-    dateCreated: "2023-06-15",
-    status: "Pending",
-    poNumber: "CUST-004",
-    total: 895.00,
-    items: [
-      { id: 1, name: "Fruit of the Loom Sweatshirt", sku: "FRT1200", quantity: 110, price: 8.15, total: 896.50 }
-    ]
-  },
-  {
-    id: "PO-2023-005",
-    supplier: "SanMar",
-    dateCreated: "2023-06-20",
-    status: "Cancelled",
-    poNumber: "CUST-005",
-    total: 556.25,
-    items: [
-      { id: 1, name: "Jerzees Hoodie", sku: "JRZ996", quantity: 25, price: 12.75, total: 318.75 },
-      { id: 2, name: "Port & Company Essential Tee", sku: "PC61", quantity: 75, price: 3.10, total: 232.50 }
-    ]
-  }
-];
+interface POItem {
+  id: string;
+  sku: string;
+  product_name: string;
+  brand?: string;
+  color?: string;
+  size?: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  ship_from_warehouse?: string;
+}
 
-function PurchaseOrdersContent() {
+const statusColors = {
+  draft: 'bg-gray-100 text-gray-800',
+  submitted: 'bg-blue-100 text-blue-800',
+  confirmed: 'bg-green-100 text-green-800',
+  in_production: 'bg-yellow-100 text-yellow-800',
+  shipped: 'bg-purple-100 text-purple-800',
+  delivered: 'bg-emerald-100 text-emerald-800',
+  cancelled: 'bg-red-100 text-red-800'
+};
+
+export default function PurchaseOrders() {
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [filteredOrders, setFilteredOrders] = useState<PurchaseOrder[]>([]);
+  const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
+  const [poItems, setPOItems] = useState<POItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [supplierFilter, setSupplierFilter] = useState('All');
-  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
-  const [purchaseOrders, setPurchaseOrders] = useState(initialPurchaseOrders);
-  const [activeTab, setActiveTab] = useState('active-carts');
-  const [selectedCartDetails, setSelectedCartDetails] = useState<string | null>(null);
-  const [cartDetailsOpen, setCartDetailsOpen] = useState(false);
-  const location = useLocation();
-  
-  const { 
-    carts, 
-    deleteCart, 
-    convertCartToPO, 
-    updateCart,
-    getCartTotals,
-    createCart 
-  } = useCartManager();
-  
-  const statuses = ['All', 'Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
-  const suppliers = ['All', 'SanMar', 'Alphabroder', 'S&S Activewear', 'TSC Apparel'];
-  const itemsPerPage = 10;
-  
-  // Check if we're navigating from cart checkout
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [showViewDialog, setShowViewDialog] = useState(false);
+
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const newOrder = params.get('newOrder');
-    
-    if (newOrder === 'true') {
-      toast.success("Your purchase order has been created successfully!");
-    }
-  }, [location]);
-  
-  // Filter purchase orders based on search term, status, and supplier
-  const filteredOrders = purchaseOrders.filter(order => {
-    const matchesSearch = order.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         (order.poNumber && order.poNumber.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesStatus = statusFilter === 'All' || order.status === statusFilter;
-    const matchesSupplier = supplierFilter === 'All' || order.supplier === supplierFilter;
-    
-    return matchesSearch && matchesStatus && matchesSupplier;
-  });
-  
-  // Calculate pagination
-  const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const displayedOrders = filteredOrders.slice(startIndex, startIndex + itemsPerPage);
-  
-  const toggleOrderExpansion = (orderId: string) => {
-    if (expandedOrder === orderId) {
-      setExpandedOrder(null);
-    } else {
-      setExpandedOrder(orderId);
-    }
-  };
-  
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Pending':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'Processing':
-        return 'bg-blue-100 text-blue-800';
-      case 'Shipped':
-        return 'bg-purple-100 text-purple-800';
-      case 'Delivered':
-        return 'bg-green-100 text-green-800';
-      case 'Cancelled':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-  
-  const activeCarts = carts.filter(cart => cart.status === 'draft' || cart.status === 'ready');
-  const submittedCarts = carts.filter(cart => cart.status === 'submitted');
-  
-  const handleConvertToPO = async (cartId: string) => {
+    loadPurchaseOrders();
+  }, []);
+
+  useEffect(() => {
+    filterOrders();
+  }, [purchaseOrders, searchTerm, statusFilter]);
+
+  const loadPurchaseOrders = async () => {
     try {
-      await convertCartToPO(cartId);
-      toast.success("Cart converted to Purchase Order successfully!");
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('purchase_orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setPurchaseOrders(data || []);
     } catch (error) {
-      toast.error("Failed to convert cart to Purchase Order");
+      console.error('Error loading purchase orders:', error);
+      toast.error('Failed to load purchase orders');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getCartStatusColor = (status: string) => {
-    switch (status) {
-      case 'draft': return 'bg-gray-100 text-gray-800';
-      case 'ready': return 'bg-blue-100 text-blue-800';
-      case 'submitted': return 'bg-green-100 text-green-800';
-      default: return 'bg-gray-100 text-gray-800';
+  const filterOrders = () => {
+    let filtered = [...purchaseOrders];
+
+    // Apply search filter
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter(po => 
+        po.po_number.toLowerCase().includes(term) ||
+        po.supplier_name.toLowerCase().includes(term) ||
+        po.buyer_name?.toLowerCase().includes(term) ||
+        po.buyer_company?.toLowerCase().includes(term)
+      );
+    }
+
+    // Apply status filter
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(po => po.status === statusFilter);
+    }
+
+    setFilteredOrders(filtered);
+  };
+
+  const loadPOItems = async (poId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('purchase_order_items')
+        .select('*')
+        .eq('po_id', poId)
+        .order('created_at');
+
+      if (error) throw error;
+      setPOItems(data || []);
+    } catch (error) {
+      console.error('Error loading PO items:', error);
+      toast.error('Failed to load PO items');
     }
   };
 
-  const handleViewCartDetails = (cartId: string) => {
-    setSelectedCartDetails(cartId);
-    setCartDetailsOpen(true);
+  const viewPO = async (po: PurchaseOrder) => {
+    setSelectedPO(po);
+    await loadPOItems(po.id);
+    setShowViewDialog(true);
   };
 
-  const handleDownloadCartDocument = (cartId: string) => {
-    const cart = carts.find(c => c.id === cartId);
-    if (cart) {
-      toast.success(`Downloading document for ${cart.name}...`);
-      // Future implementation: Generate and download PDF/document
+  const exportPO = async (po: PurchaseOrder) => {
+    try {
+      // Load PO items for export
+      const { data: items, error } = await supabase
+        .from('purchase_order_items')
+        .select('*')
+        .eq('po_id', po.id);
+
+      if (error) throw error;
+
+      // Create PDF-style content
+      const poContent = generatePOContent(po, items || []);
+      
+      // Create and download as text file (could be enhanced to PDF)
+      const blob = new Blob([poContent], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `PO_${po.po_number}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast.success('Purchase order exported successfully');
+    } catch (error) {
+      console.error('Error exporting PO:', error);
+      toast.error('Failed to export purchase order');
     }
   };
 
-  const selectedCart = selectedCartDetails ? carts.find(c => c.id === selectedCartDetails) : null;
+  const generatePOContent = (po: PurchaseOrder, items: POItem[]): string => {
+    const formatCurrency = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+    const formatDate = (date: string) => new Date(date).toLocaleDateString();
+
+    return `
+PURCHASE ORDER
+=====================================
+
+PO Number: ${po.po_number}
+Date: ${formatDate(po.po_date)}
+Status: ${po.status.toUpperCase()}
+
+SUPPLIER:
+${po.supplier_name}
+Supplier ID: ${po.supplier_id}
+
+BUYER:
+${po.buyer_name || 'Not specified'}
+${po.buyer_email || ''}
+${po.buyer_company || ''}
+
+ORDER DETAILS:
+Payment Terms: ${po.payment_terms || 'Net 30'}
+Shipping Method: ${po.shipping_method || 'Ground'}
+${po.requested_ship_date ? `Requested Ship Date: ${formatDate(po.requested_ship_date)}` : ''}
+
+LINE ITEMS:
+=====================================
+${'SKU'.padEnd(15)} ${'Product Name'.padEnd(30)} ${'Color/Size'.padEnd(15)} ${'Qty'.padEnd(5)} ${'Unit Price'.padEnd(12)} ${'Total'.padEnd(12)}
+${'-'.repeat(95)}
+${items.map(item => 
+  `${item.sku.padEnd(15)} ${item.product_name.substring(0, 30).padEnd(30)} ${`${item.color || ''}/${item.size || ''}`.padEnd(15)} ${item.quantity.toString().padEnd(5)} ${formatCurrency(item.unit_price).padEnd(12)} ${formatCurrency(item.line_total).padEnd(12)}`
+).join('\n')}
+${'-'.repeat(95)}
+
+TOTALS:
+Subtotal: ${formatCurrency(po.subtotal)}
+Tax: ${formatCurrency(po.tax_amount)}
+Shipping: ${formatCurrency(po.shipping_amount)}
+TOTAL: ${formatCurrency(po.total_amount)}
+
+${po.special_instructions ? `\nSPECIAL INSTRUCTIONS:\n${po.special_instructions}` : ''}
+
+Generated on: ${new Date().toLocaleString()}
+    `.trim();
+  };
+
+  const getStatusBadge = (status: string) => {
+    const colorClass = statusColors[status as keyof typeof statusColors] || statusColors.draft;
+    return (
+      <Badge className={`${colorClass} border-0`}>
+        {status.replace('_', ' ').toUpperCase()}
+      </Badge>
+    );
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(amount);
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString();
+  };
 
   return (
-    <div className="flex-1 p-6 space-y-6">
+    <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold tracking-tight">Cart & Purchase Order Management</h1>
-        <Button onClick={() => createCart()}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create New Cart
-        </Button>
+        <div>
+          <h1 className="text-3xl font-bold">Purchase Orders</h1>
+          <p className="text-gray-600">Manage and track your supplier purchase orders</p>
+        </div>
       </div>
-      
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="active-carts" className="flex items-center gap-2">
-            <ShoppingCart className="h-4 w-4" />
-            Active Carts ({activeCarts.length})
-          </TabsTrigger>
-          <TabsTrigger value="submitted-carts" className="flex items-center gap-2">
-            <Package className="h-4 w-4" />
-            Submitted Carts ({submittedCarts.length})
-          </TabsTrigger>
-          <TabsTrigger value="purchase-orders" className="flex items-center gap-2">
-            <History className="h-4 w-4" />
-            Historical POs ({purchaseOrders.length})
-          </TabsTrigger>
-        </TabsList>
 
-        {/* Active Carts Tab */}
-        <TabsContent value="active-carts">
-          <Card>
-            <CardHeader>
-              <CardTitle>Active Carts</CardTitle>
-              <CardDescription>
-                Draft and ready carts that can be converted to purchase orders
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {activeCarts.length === 0 ? (
-                <div className="text-center py-8">
-                  <ShoppingCart className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-500 mb-4">No active carts found</p>
-                  <Button onClick={() => createCart()}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Create Your First Cart
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {activeCarts.map((cart) => {
-                    const totals = getCartTotals(cart.id);
-                    
-                    // Group items by supplier
-                    const itemsBySupplier = cart.items.reduce((acc, item) => {
-                      if (!acc[item.supplierName]) {
-                        acc[item.supplierName] = [];
-                      }
-                      acc[item.supplierName].push(item);
-                      return acc;
-                    }, {} as Record<string, typeof cart.items>);
-                    
-                    return (
-                      <Card key={cart.id}>
-                        <CardContent className="p-6">
-                          {/* Cart Header */}
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                <h3 className="text-lg font-semibold">{cart.name}</h3>
-                                <Badge className={getCartStatusColor(cart.status)}>
-                                  {cart.status}
-                                </Badge>
-                                <Badge variant="outline" className="capitalize">
-                                  {cart.orderingStrategy}
-                                </Badge>
-                              </div>
-                              <div className="text-sm text-gray-600">
-                                Created: {cart.createdAt.toLocaleDateString()} • 
-                                Updated: {cart.updatedAt.toLocaleDateString()}
-                              </div>
-                              {totals.totalItems > 0 && (
-                                <div className="text-lg font-semibold text-primary mt-2">
-                                  {totals.totalItems} items • ${totals.subtotal.toFixed(2)}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex gap-2">
-                              {totals.totalItems > 0 && (
-                                <Button
-                                  variant="default"
-                                  onClick={() => handleConvertToPO(cart.id)}
-                                >
-                                  <Send className="h-4 w-4 mr-2" />
-                                  Convert to PO
-                                </Button>
-                              )}
-                              <Button
-                                variant="outline"
-                                onClick={() => deleteCart(cart.id)}
-                                className="text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete Cart
-                              </Button>
-                            </div>
-                          </div>
-
-                          {/* Cart Items */}
-                          {cart.items.length > 0 ? (
-                            <div className="space-y-4">
-                              {Object.entries(itemsBySupplier).map(([supplier, items]) => (
-                                <div key={supplier} className="space-y-3">
-                                  <div className="flex items-center gap-2 border-b pb-2">
-                                    <h4 className="font-medium text-gray-700">Supplier: {supplier}</h4>
-                                    <Badge variant="secondary">
-                                      {items.length} {items.length === 1 ? 'item' : 'items'}
-                                    </Badge>
-                                  </div>
-                                  
-                                  {items.map((item) => (
-                                    <EditableCartItem
-                                      key={`${item.id}-${item.supplierName}`}
-                                      cartId={cart.id}
-                                      item={item}
-                                    />
-                                  ))}
-                                  
-                                  {/* Supplier Subtotal */}
-                                  <div className="text-right text-sm text-gray-600 border-t pt-2">
-                                    Supplier Total: ${items.reduce((sum, item) => sum + (item.price * item.totalQuantity), 0).toFixed(2)}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="text-center py-8 text-gray-500">
-                              <ShoppingCart className="h-12 w-12 mx-auto mb-2 text-gray-300" />
-                              <p>This cart is empty</p>
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Submitted Carts Tab */}
-        <TabsContent value="submitted-carts">
-          <Card>
-            <CardHeader>
-              <CardTitle>Submitted Carts</CardTitle>
-              <CardDescription>
-                Carts that have been converted to purchase orders and are pending processing
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {submittedCarts.length === 0 ? (
-                <div className="text-center py-8">
-                  <Package className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-500">No submitted carts found</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {submittedCarts.map((cart) => {
-                    const totals = getCartTotals(cart.id);
-                    return (
-                      <div key={cart.id} className="border rounded-lg p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <h3 className="font-medium">{cart.name}</h3>
-                              <Badge className="bg-green-100 text-green-800">
-                                Submitted
-                              </Badge>
-                              {cart.metadata.poNumber && (
-                                <Badge variant="outline">
-                                  PO: {cart.metadata.poNumber}
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="text-sm text-gray-600">
-                              Submitted: {cart.updatedAt.toLocaleDateString()} • 
-                              {totals.totalItems} items • ${totals.subtotal.toFixed(2)}
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => handleViewCartDetails(cart.id)}>
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => handleDownloadCartDocument(cart.id)}>
-                              <FileText className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Historical Purchase Orders Tab */}
-        <TabsContent value="purchase-orders">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Historical Purchase Orders</CardTitle>
-              <CardDescription>
-                Track and manage completed purchase orders from your suppliers
-              </CardDescription>
-            </CardHeader>
-        <CardContent>
-          <div className="flex flex-col md:flex-row gap-4 mb-6">
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search purchase orders..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-8"
-              />
+      {/* Filters and Search */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                <Input
+                  placeholder="Search PO number, supplier, or buyer..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full md:w-[180px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                {statuses.map((status) => (
-                  <SelectItem key={status} value={status}>
-                    {status}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={supplierFilter} onValueChange={setSupplierFilter}>
-              <SelectTrigger className="w-full md:w-[180px]">
-                <SelectValue placeholder="Supplier" />
-              </SelectTrigger>
-              <SelectContent>
-                {suppliers.map((supplier) => (
-                  <SelectItem key={supplier} value={supplier}>
-                    {supplier}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button variant="outline" className="gap-2">
-              <Filter className="h-4 w-4" />
-              More Filters
-            </Button>
+            <div className="w-48">
+              <select 
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Statuses</option>
+                <option value="draft">Draft</option>
+                <option value="submitted">Submitted</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="in_production">In Production</option>
+                <option value="shipped">Shipped</option>
+                <option value="delivered">Delivered</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
           </div>
-          
-          <div className="border rounded-md">
+        </CardContent>
+      </Card>
+
+      {/* Purchase Order Manager Component */}
+      <PurchaseOrderManager />
+
+      {/* Purchase Orders Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="w-5 h-5" />
+            Purchase Orders ({filteredOrders.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="text-gray-500">Loading purchase orders...</div>
+            </div>
+          ) : filteredOrders.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>No purchase orders found</p>
+              <p className="text-sm">
+                {searchTerm || statusFilter !== 'all' ? 'Try adjusting your filters' : 'Create your first PO from a cart'}
+              </p>
+            </div>
+          ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Order #</TableHead>
                   <TableHead>PO Number</TableHead>
                   <TableHead>Supplier</TableHead>
+                  <TableHead>Buyer</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {displayedOrders.map((order) => (
-                  <React.Fragment key={order.id}>
-                    <TableRow>
-                      <TableCell className="font-medium">{order.id}</TableCell>
-                      <TableCell>{order.poNumber || "-"}</TableCell>
-                      <TableCell>{order.supplier}</TableCell>
-                      <TableCell>{order.dateCreated}</TableCell>
-                      <TableCell>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
-                          {order.status}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">${order.total.toFixed(2)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="sm" onClick={() => toggleOrderExpansion(order.id)}>
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm">
-                            <FileText className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                    
-                    {expandedOrder === order.id && (
-                      <TableRow>
-                        <TableCell colSpan={7}>
-                          <div className="py-4 px-6 bg-muted/50 rounded-md">
-                            <h4 className="font-medium mb-3">Order Items</h4>
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>SKU</TableHead>
-                                  <TableHead>Product</TableHead>
-                                  <TableHead className="text-right">Quantity</TableHead>
-                                  <TableHead className="text-right">Unit Price</TableHead>
-                                  <TableHead className="text-right">Total</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {order.items.map((item) => (
-                                  <TableRow key={item.id}>
-                                    <TableCell>{item.sku}</TableCell>
-                                    <TableCell>{item.name}</TableCell>
-                                    <TableCell className="text-right">{item.quantity}</TableCell>
-                                    <TableCell className="text-right">${item.price.toFixed(2)}</TableCell>
-                                    <TableCell className="text-right">${item.total.toFixed(2)}</TableCell>
-                                  </TableRow>
-                                ))}
-                                <TableRow>
-                                  <TableCell colSpan={4} className="text-right font-medium">Order Total:</TableCell>
-                                  <TableCell className="text-right font-bold">${order.total.toFixed(2)}</TableCell>
-                                </TableRow>
-                              </TableBody>
-                            </Table>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </React.Fragment>
-                ))}
-                
-                {displayedOrders.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                      No purchase orders found. Try adjusting your search or filters.
+                {filteredOrders.map((po) => (
+                  <TableRow key={po.id}>
+                    <TableCell className="font-mono font-medium">{po.po_number}</TableCell>
+                    <TableCell>{po.supplier_name}</TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium">{po.buyer_name || 'Not specified'}</p>
+                        {po.buyer_company && (
+                          <p className="text-sm text-gray-600">{po.buyer_company}</p>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>{formatDate(po.po_date)}</TableCell>
+                    <TableCell>{getStatusBadge(po.status)}</TableCell>
+                    <TableCell className="font-medium">{formatCurrency(po.total_amount)}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => viewPO(po)}
+                          className="flex items-center gap-1"
+                        >
+                          <Eye className="w-3 h-3" />
+                          View
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => exportPO(po)}
+                          className="flex items-center gap-1"
+                        >
+                          <Download className="w-3 h-3" />
+                          Export
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
-                )}
+                ))}
               </TableBody>
             </Table>
-          </div>
-          
-          {totalPages > 1 && (
-            <div className="mt-4">
-              <Pagination>
-                <PaginationContent>
-                  <PaginationItem>
-                    <PaginationPrevious 
-                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                      className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
-                    />
-                  </PaginationItem>
-                  
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                    <PaginationItem key={page}>
-                      <PaginationLink
-                        isActive={currentPage === page}
-                        onClick={() => setCurrentPage(page)}
-                      >
-                        {page}
-                      </PaginationLink>
-                    </PaginationItem>
-                  ))}
-                  
-                  <PaginationItem>
-                    <PaginationNext 
-                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                      className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
-                    />
-                  </PaginationItem>
-                </PaginationContent>
-              </Pagination>
-            </div>
           )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+        </CardContent>
+      </Card>
 
-      <CartDetailsSheet
-        cart={selectedCart || null}
-        open={cartDetailsOpen}
-        onOpenChange={setCartDetailsOpen}
-      />
+      {/* View PO Dialog */}
+      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+        <DialogContent className="max-w-5xl max-h-[95vh] overflow-y-auto">
+          {selectedPO && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <FileText className="w-5 h-5" />
+                    Purchase Order {selectedPO.po_number}
+                  </span>
+                  {getStatusBadge(selectedPO.status)}
+                </DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                {/* Header Information */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Building2 className="w-4 h-4" />
+                        Supplier
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="font-medium">{selectedPO.supplier_name}</p>
+                      <p className="text-sm text-gray-600">ID: {selectedPO.supplier_id}</p>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <User className="w-4 h-4" />
+                        Buyer
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="font-medium">{selectedPO.buyer_name || 'Not specified'}</p>
+                      {selectedPO.buyer_email && (
+                        <p className="text-sm text-gray-600">{selectedPO.buyer_email}</p>
+                      )}
+                      {selectedPO.buyer_company && (
+                        <p className="text-sm text-gray-600">{selectedPO.buyer_company}</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Calendar className="w-4 h-4" />
+                        Dates
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm">
+                        <span className="font-medium">PO Date:</span> {formatDate(selectedPO.po_date)}
+                      </p>
+                      {selectedPO.requested_ship_date && (
+                        <p className="text-sm">
+                          <span className="font-medium">Ship Date:</span> {formatDate(selectedPO.requested_ship_date)}
+                        </p>
+                      )}
+                      <p className="text-sm">
+                        <span className="font-medium">Payment:</span> {selectedPO.payment_terms || 'Net 30'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Line Items */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Package className="w-5 h-5" />
+                      Line Items
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>SKU</TableHead>
+                          <TableHead>Product</TableHead>
+                          <TableHead>Variant</TableHead>
+                          <TableHead>Warehouse</TableHead>
+                          <TableHead className="text-right">Qty</TableHead>
+                          <TableHead className="text-right">Unit Price</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {poItems.map((item) => (
+                          <TableRow key={item.id}>
+                            <TableCell className="font-mono">{item.sku}</TableCell>
+                            <TableCell>
+                              <div>
+                                <p className="font-medium">{item.product_name}</p>
+                                {item.brand && <p className="text-sm text-gray-600">{item.brand}</p>}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {item.color && item.size ? (
+                                <div className="text-sm">
+                                  <span className="block">{item.color}</span>
+                                  <span className="text-gray-600">Size: {item.size}</span>
+                                </div>
+                              ) : (
+                                <span className="text-gray-500">-</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-xs">
+                                {item.ship_from_warehouse || 'TBD'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">{item.quantity}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.unit_price)}</TableCell>
+                            <TableCell className="text-right font-medium">{formatCurrency(item.line_total)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+
+                {/* Totals */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <DollarSign className="w-5 h-5" />
+                      Order Totals
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span>Subtotal:</span>
+                        <span>{formatCurrency(selectedPO.subtotal)}</span>
+                      </div>
+                      {selectedPO.tax_amount > 0 && (
+                        <div className="flex justify-between">
+                          <span>Tax:</span>
+                          <span>{formatCurrency(selectedPO.tax_amount)}</span>
+                        </div>
+                      )}
+                      {selectedPO.shipping_amount > 0 && (
+                        <div className="flex justify-between">
+                          <span>Shipping:</span>
+                          <span>{formatCurrency(selectedPO.shipping_amount)}</span>
+                        </div>
+                      )}
+                      <Separator />
+                      <div className="flex justify-between text-lg font-semibold">
+                        <span>Total:</span>
+                        <span>{formatCurrency(selectedPO.total_amount)}</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Special Instructions */}
+                {selectedPO.special_instructions && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Special Instructions</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-gray-700 whitespace-pre-wrap">{selectedPO.special_instructions}</p>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex justify-end gap-3">
+                  <Button variant="outline" onClick={() => exportPO(selectedPO)}>
+                    <Download className="w-4 h-4 mr-2" />
+                    Export
+                  </Button>
+                  <Button>
+                    <Send className="w-4 h-4 mr-2" />
+                    Send to Supplier
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
-}
-
-export default function PurchaseOrders() {
-  return <PurchaseOrdersContent />;
 }

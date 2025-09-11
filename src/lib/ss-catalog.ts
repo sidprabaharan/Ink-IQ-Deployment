@@ -130,7 +130,17 @@ export async function searchSSCatalog(options: SSCatalogSearchOptions = {}): Pro
           size_label,
           price,
           images,
-          is_main_part
+          is_main_part,
+          ss_inventory_levels (
+            quantity_available,
+            warehouse_id,
+            ss_warehouse_locations (
+              id,
+              name,
+              city,
+              state
+            )
+          )
         )
       `, { count: 'exact' })
       .eq('supplier_id', 'SS')
@@ -537,12 +547,33 @@ export function mapSSProductToUnified(product: SSProduct): any {
   const sizes = new Set<string>();
   let minPrice = product.min_price;
   let maxPrice = product.max_price;
+  let totalInventory = 0;
+  const inventoryByWarehouseSize: Record<string, Record<string, number>> = {};
 
   variants.forEach((variant: SSProductVariant) => {
     if (variant.color_name) colors.add(variant.color_name);
     if (variant.size_label) sizes.add(variant.size_label);
     if (variant.price && (!minPrice || variant.price < minPrice)) minPrice = variant.price;
     if (variant.price && (!maxPrice || variant.price > maxPrice)) maxPrice = variant.price;
+
+    // Process inventory levels if available
+    if (Array.isArray((variant as any).ss_inventory_levels)) {
+      (variant as any).ss_inventory_levels.forEach((inv: any) => {
+        const warehouse = inv.ss_warehouse_locations;
+        const warehouseName = warehouse ? `${warehouse.city}, ${warehouse.state}` : inv.warehouse_id;
+        
+        if (!inventoryByWarehouseSize[warehouseName]) {
+          inventoryByWarehouseSize[warehouseName] = {};
+        }
+        
+        if (!inventoryByWarehouseSize[warehouseName][variant.size_label]) {
+          inventoryByWarehouseSize[warehouseName][variant.size_label] = 0;
+        }
+        
+        inventoryByWarehouseSize[warehouseName][variant.size_label] += inv.quantity_available || 0;
+        totalInventory += inv.quantity_available || 0;
+      });
+    }
   });
 
   return {
@@ -557,7 +588,8 @@ export function mapSSProductToUnified(product: SSProduct): any {
     suppliers: [{
       name: 'S&S Activewear',
       price: minPrice || 0,
-      inventory: 100, // We'd need to calculate this from inventory table
+      inventory: totalInventory,
+      inventoryByWarehouseSize: Object.keys(inventoryByWarehouseSize).length > 0 ? inventoryByWarehouseSize : undefined,
     }],
     // Keep original fields for compatibility
     supplierId: 'SS',

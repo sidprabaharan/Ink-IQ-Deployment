@@ -2,7 +2,7 @@ import React from 'react';
 import { useCartManager } from '@/context/CartManagerContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ShoppingCart, X, Plus } from 'lucide-react';
+import { ShoppingCart, X, Plus, FileText } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
@@ -283,13 +283,33 @@ export function EnhancedCartSidebar() {
                 <span>${activeCartTotals.subtotal.toFixed(2)}</span>
               </div>
               
-              <Button 
-                className="w-full" 
-                onClick={() => setIsCheckingOut(true)}
-                disabled={activeCartTotals.totalItems === 0}
-              >
-                Checkout
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  className="flex-1" 
+                  onClick={() => setIsCheckingOut(true)}
+                  disabled={activeCartTotals.totalItems === 0}
+                >
+                  Checkout
+                </Button>
+                <Button 
+                  variant="outline"
+                  className="flex-1"
+                  onClick={async () => {
+                    if (!activeCart) return;
+                    try {
+                      const poNumber = await convertCartToPO(activeCart.id);
+                      toast.success(`PO ${poNumber} created!`);
+                      navigate('/purchase-orders');
+                    } catch (error) {
+                      toast.error('Failed to create PO');
+                    }
+                  }}
+                  disabled={activeCartTotals.totalItems === 0}
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  Create PO
+                </Button>
+              </div>
             </div>
           </>
         )}

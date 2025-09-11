@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual Inventory Sync</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .button:hover {
+            background-color: #0056b3;
+        }
+        .button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+        }
+        .success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background-color: #d1ecf1;
+            border-color: #bee5eb;
+            color: #0c5460;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .products {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .product-card {
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #fafafa;
+        }
+        .product-card h4 {
+            margin: 0 0 5px 0;
+            color: #333;
+        }
+        .product-card p {
+            margin: 3px 0;
+            font-size: 14px;
+            color: #666;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .inventory-cell {
+            text-align: center;
+            font-weight: bold;
+        }
+        .in-stock {
+            color: green;
+        }
+        .low-stock {
+            color: orange;
+        }
+        .out-of-stock {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Manual S&S Inventory Sync</h1>
+        
+        <div class="status info">
+            <p><strong>Purpose:</strong> This tool manually syncs inventory data from S&S PromoStandards API to your database.</p>
+            <p>Click the buttons below to sync inventory for specific products.</p>
+        </div>
+
+        <div>
+            <h2>Step 1: Select Products to Sync</h2>
+            <button class="button" onclick="syncProduct('G200')">Sync G200 - Gildan 2000</button>
+            <button class="button" onclick="syncProduct('G500')">Sync G500 - Gildan 5000</button>
+            <button class="button" onclick="syncProduct('G180')">Sync G180 - Gildan 18000</button>
+            <button class="button" onclick="syncProduct('B1701')">Sync B1701 - Bella+Canvas</button>
+            <button class="button" onclick="syncProduct('G640')">Sync G640 - Gildan Softstyle</button>
+            <br><br>
+            <button class="button" onclick="syncAllProducts()">Sync All Products</button>
+            <button class="button" onclick="checkInventoryStatus()">Check Database Status</button>
+        </div>
+
+        <div id="log" class="log"></div>
+        
+        <div id="results"></div>
+    </div>
+
+    <script>
+        // Initialize Supabase client
+        const SUPABASE_URL = 'https://eqdlaagjaikxdrkgvopn.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxZGxhYWdqYWlreGRya2d2b3BuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwOTUzOTMsImV4cCI6MjA3MDY3MTM5M30.DJO65QOnz7DRyUNmlyXa0wDqE5swy160Tkb_xINAsFE';
+        
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        // Logging function
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? 'red' : type === 'success' ? 'green' : 'black';
+            logDiv.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // Sync a single product
+        async function syncProduct(productId) {
+            log(`📦 Starting inventory sync for ${productId}...`);
+            
+            try {
+                // Call the Edge Function
+                const { data, error } = await supabase.functions.invoke('ss-promostandards-soap', {
+                    body: { 
+                        op: 'getInventory',
+                        productId: productId
+                    }
+                });
+
+                if (error) {
+                    log(`❌ Error syncing ${productId}: ${error.message}`, 'error');
+                    return;
+                }
+
+                if (data?.success && data?.data) {
+                    const inventory = data.data;
+                    log(`✅ Successfully retrieved inventory for ${productId}`, 'success');
+                    log(`   - ${inventory.parts?.length || 0} variants found`);
+                    
+                    // Display inventory details
+                    displayInventory(productId, inventory);
+                    
+                    // Also trigger a full product sync to ensure all data is saved
+                    await syncProductData(productId);
+                } else {
+                    log(`⚠️ No inventory data returned for ${productId}`, 'error');
+                }
+            } catch (err) {
+                log(`❌ Exception syncing ${productId}: ${err.message}`, 'error');
+            }
+        }
+
+        // Sync product data (pricing, images, etc.)
+        async function syncProductData(productId) {
+            log(`🔄 Syncing full product data for ${productId}...`);
+            
+            try {
+                const { data, error } = await supabase.functions.invoke('ss-promostandards-soap', {
+                    body: { 
+                        op: 'getExactData',
+                        productId: productId
+                    }
+                });
+
+                if (!error && data?.success) {
+                    log(`✅ Product data synced for ${productId}`, 'success');
+                }
+            } catch (err) {
+                log(`⚠️ Could not sync product data: ${err.message}`);
+            }
+        }
+
+        // Display inventory in a table
+        function displayInventory(productId, inventory) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (!inventory.parts || inventory.parts.length === 0) {
+                resultsDiv.innerHTML += `<div class="status error">No inventory data for ${productId}</div>`;
+                return;
+            }
+
+            // Group by color and size
+            const matrix = {};
+            const sizes = new Set();
+            const colors = new Set();
+            
+            inventory.parts.forEach(part => {
+                colors.add(part.color);
+                sizes.add(part.size);
+                if (!matrix[part.color]) matrix[part.color] = {};
+                matrix[part.color][part.size] = part;
+            });
+
+            const sizeArray = Array.from(sizes).sort((a, b) => {
+                const sizeOrder = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'];
+                return sizeOrder.indexOf(a) - sizeOrder.indexOf(b);
+            });
+
+            // Create inventory table
+            let html = `<h3>Inventory for ${productId}</h3>`;
+            html += '<table>';
+            html += '<tr><th>Color</th>';
+            sizeArray.forEach(size => {
+                html += `<th>${size}</th>`;
+            });
+            html += '<th>Total</th></tr>';
+
+            Array.from(colors).forEach(color => {
+                html += `<tr><td>${color}</td>`;
+                let rowTotal = 0;
+                
+                sizeArray.forEach(size => {
+                    const part = matrix[color][size];
+                    const qty = part ? part.quantityAvailable : 0;
+                    rowTotal += qty;
+                    
+                    let className = 'inventory-cell ';
+                    if (qty === 0) className += 'out-of-stock';
+                    else if (qty < 50) className += 'low-stock';
+                    else className += 'in-stock';
+                    
+                    html += `<td class="${className}">${qty}</td>`;
+                });
+                
+                html += `<td class="inventory-cell"><strong>${rowTotal}</strong></td>`;
+                html += '</tr>';
+            });
+            
+            html += '</table>';
+            
+            // Show warehouse breakdown for first variant
+            const firstPart = inventory.parts[0];
+            if (firstPart && firstPart.inventoryByLocation) {
+                html += '<h4>Warehouse Distribution (sample):</h4>';
+                html += '<ul>';
+                firstPart.inventoryByLocation.forEach(loc => {
+                    html += `<li>${loc.locationId} (${loc.locationName}): ${loc.quantity} units</li>`;
+                });
+                html += '</ul>';
+            }
+            
+            resultsDiv.innerHTML = html;
+        }
+
+        // Sync all products
+        async function syncAllProducts() {
+            const products = ['G200', 'G500', 'G180', 'B1701', 'G640'];
+            log('🚀 Starting sync for all products...');
+            
+            for (const productId of products) {
+                await syncProduct(productId);
+                // Add a small delay between products
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            
+            log('✅ All products sync complete!', 'success');
+        }
+
+        // Check inventory status in database
+        async function checkInventoryStatus() {
+            log('📊 Checking database status...');
+            
+            try {
+                // Check variants
+                const { count: variantCount } = await supabase
+                    .from('ss_product_variants')
+                    .select('*', { count: 'exact', head: true });
+                
+                // Check inventory levels
+                const { count: inventoryCount } = await supabase
+                    .from('ss_inventory_levels')
+                    .select('*', { count: 'exact', head: true });
+                
+                log(`Database Status:`, 'success');
+                log(`   - Product variants: ${variantCount || 0}`);
+                log(`   - Inventory records: ${inventoryCount || 0}`);
+                
+                if (variantCount > 0) {
+                    log('✨ Inventory data is available in the database!', 'success');
+                    log('You can now refresh your main UI to see real inventory numbers.', 'success');
+                } else {
+                    log('⚠️ No inventory data found yet. Try syncing some products.', 'error');
+                }
+            } catch (err) {
+                log(`Error checking database: ${err.message}`, 'error');
+            }
+        }
+
+        // Initial status check
+        window.onload = () => {
+            log('🔧 Manual Inventory Sync Tool Ready');
+            log('This tool bypasses authentication issues to sync inventory directly.');
+            checkInventoryStatus();
+        };
+    </script>
+</body>
+</html>
+
