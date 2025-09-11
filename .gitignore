@@ -41,3 +41,7 @@ dist-ssr
 # Local AI configs
 .cursor
 
+
+# Ignore embedded repo
+railway-deploy/
+
